@@ -526,6 +526,7 @@ const handleRegister = (ws, message) => {
     banned: false,
     createdAt: new Date().toISOString(),
     lastSeen: new Date().toISOString(),
+    reports: [],
   }
 
   users.push(newUser)
@@ -597,6 +598,8 @@ const handleLogin = (ws, message) => {
     )
     return
   }
+
+  if (!user.reports) user.reports = []
 
   user.status = "online"
   user.lastSeen = new Date().toISOString()
@@ -763,7 +766,8 @@ const handleUpdateProfile = (ws, message) => {
 
   // Atualizar campos permitidos
   if (message.name) users[userIndex].name = message.name
-  if (message.profileImage) users[userIndex].profileImage = message.profileImage
+  if (message.avatar) users[userIndex].avatar = message.avatar
+  if (message.profileImage !== undefined) users[userIndex].profileImage = message.profileImage
 
   // Atualizar o usuário conectado
   connectedUsers.set(ws, users[userIndex])
@@ -779,6 +783,53 @@ const handleUpdateProfile = (ws, message) => {
 
   // Atualizar lista de usuários para todos
   broadcastUserList()
+}
+
+const handleReportUser = (ws, message) => {
+  const reporter = connectedUsers.get(ws)
+  if (!reporter) return
+
+  const users = loadUsers()
+  const reportedUserIndex = users.findIndex((u) => u.id === message.reportedUserId)
+
+  if (reportedUserIndex === -1) return
+
+  // Inicializar array de reports se não existir
+  if (!users[reportedUserIndex].reports) {
+    users[reportedUserIndex].reports = []
+  }
+
+  // Verificar se o usuário já denunciou este usuário
+  const existingReport = users[reportedUserIndex].reports.find((r) => r.reporterId === reporter.id)
+
+  if (!existingReport) {
+    // Adicionar nova denúncia
+    users[reportedUserIndex].reports.push({
+      id: crypto.randomUUID(),
+      reporterId: reporter.id,
+      reporterName: reporter.name,
+      reason: message.reason || "Comportamento inadequado",
+      timestamp: new Date().toISOString(),
+    })
+
+    saveUsers(users)
+
+    ws.send(
+      JSON.stringify({
+        type: "reportSuccess",
+        message: "Usuário denunciado com sucesso!",
+      }),
+    )
+
+    console.log(`📢 Usuário ${users[reportedUserIndex].name} foi denunciado por ${reporter.name}`)
+  } else {
+    ws.send(
+      JSON.stringify({
+        type: "reportError",
+        message: "Você já denunciou este usuário.",
+      }),
+    )
+  }
 }
 
 const handleJoinRoom = (ws, message) => {
@@ -916,6 +967,9 @@ wss.on("connection", (ws) => {
           break
         case "disconnect":
           handleDisconnect(ws)
+          break
+        case "reportUser":
+          handleReportUser(ws, message)
           break
         default:
           console.log("❓ Tipo de mensagem desconhecido:", message.type)
