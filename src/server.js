@@ -10,10 +10,7 @@ const DATA_DIR = path.join(__dirname, "data")
 const USERS_FILE = path.join(DATA_DIR, "users.json")
 const MESSAGES_FILE = path.join(DATA_DIR, "messages.json")
 const ROOMS_FILE = path.join(DATA_DIR, "rooms.json")
-const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json")
-const MASTER_PASSWORD = "sitedogorilão"
-const ADMIN_PASSWORD = "steam.jv.com"
-const SITE_STATUS_FILE = path.join(DATA_DIR, "site_status.json")
+const MASTER_PASSWORD = "sitedogorilão" 
 
 // Criar diretório de dados
 if (!fs.existsSync(DATA_DIR)) {
@@ -30,10 +27,8 @@ const initializeFile = (filePath, defaultData = []) => {
 initializeFile(USERS_FILE)
 initializeFile(MESSAGES_FILE)
 initializeFile(ROOMS_FILE, [
-  { id: "general", name: "Geral", description: "Chat principal", createdAt: new Date().toISOString() },
+  { id: "general", name: "Geral", description: "Chat principal", createdAt: new Date().toISOString() }
 ])
-initializeFile(SESSIONS_FILE, {})
-initializeFile(SITE_STATUS_FILE, { enabled: true })
 
 // Funções de dados
 const loadData = (filePath) => {
@@ -54,22 +49,6 @@ const loadMessages = () => loadData(MESSAGES_FILE)
 const saveMessages = (messages) => saveData(MESSAGES_FILE, messages)
 const loadRooms = () => loadData(ROOMS_FILE)
 const saveRooms = (rooms) => saveData(ROOMS_FILE, rooms)
-const loadSessions = () => {
-  try {
-    return JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"))
-  } catch {
-    return {}
-  }
-}
-const saveSessions = (sessions) => saveData(SESSIONS_FILE, sessions)
-const loadSiteStatus = () => {
-  try {
-    return JSON.parse(fs.readFileSync(SITE_STATUS_FILE, "utf8"))
-  } catch {
-    return { enabled: true }
-  }
-}
-const saveSiteStatus = (status) => saveData(SITE_STATUS_FILE, status)
 
 // Estado do servidor
 const connectedUsers = new Map()
@@ -97,293 +76,8 @@ const server = http.createServer((req, res) => {
         message: "GORILA CHAT Backend is running!",
         timestamp: new Date().toISOString(),
         connectedUsers: connectedUsers.size,
-        siteEnabled: loadSiteStatus().enabled,
       }),
     )
-  } else if (req.url === "/admin/verify") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        if (data.password === ADMIN_PASSWORD) {
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(401, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Senha incorreta" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/users") {
-    res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(loadUsers()))
-  } else if (req.url === "/admin/messages") {
-    res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(loadMessages()))
-  } else if (req.url === "/admin/site-status") {
-    res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(loadSiteStatus()))
-  } else if (req.url === "/admin/update-site-status") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        saveSiteStatus(data)
-        res.writeHead(200, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: true }))
-
-        // Notificar todos os clientes sobre a mudança de status
-        broadcast({
-          type: "siteStatusChanged",
-          enabled: data.enabled,
-        })
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/update-user") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const userData = JSON.parse(body)
-        const users = loadUsers()
-        const userIndex = users.findIndex((u) => u.id === userData.id)
-
-        if (userIndex !== -1) {
-          users[userIndex] = { ...users[userIndex], ...userData }
-          saveUsers(users)
-
-          // Notificar o usuário se estiver online
-          for (const [ws, user] of connectedUsers.entries()) {
-            if (user.id === userData.id) {
-              ws.send(
-                JSON.stringify({
-                  type: "userUpdated",
-                  user: users[userIndex],
-                }),
-              )
-              break
-            }
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/delete-user") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const users = loadUsers()
-        const userIndex = users.findIndex((u) => u.id === data.userId)
-
-        if (userIndex !== -1) {
-          users.splice(userIndex, 1)
-          saveUsers(users)
-
-          // Desconectar o usuário se estiver online
-          for (const [ws, user] of connectedUsers.entries()) {
-            if (user.id === data.userId) {
-              ws.send(
-                JSON.stringify({
-                  type: "accountDeleted",
-                }),
-              )
-              ws.close()
-              break
-            }
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/ban-user") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const users = loadUsers()
-        const userIndex = users.findIndex((u) => u.id === data.userId)
-
-        if (userIndex !== -1) {
-          users[userIndex].banned = data.banned
-          saveUsers(users)
-
-          // Notificar o usuário se estiver online
-          for (const [ws, user] of connectedUsers.entries()) {
-            if (user.id === data.userId) {
-              ws.send(
-                JSON.stringify({
-                  type: "userBanned",
-                  banned: data.banned,
-                }),
-              )
-              if (data.banned) {
-                ws.close()
-              }
-              break
-            }
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/clear-chat") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        let messages = loadMessages()
-
-        if (data.type === "all") {
-          messages = []
-        } else if (data.type === "images") {
-          messages = messages.filter((m) => m.type !== "image")
-        } else if (data.type === "text") {
-          messages = messages.filter((m) => m.type !== "text")
-        }
-
-        saveMessages(messages)
-
-        // Notificar todos os clientes
-        broadcast({
-          type: "chatCleared",
-          clearType: data.type,
-        })
-
-        res.writeHead(200, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: true }))
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/check-session") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const sessions = loadSessions()
-        const sessionData = sessions[data.sessionId]
-
-        if (sessionData) {
-          const users = loadUsers()
-          const user = users.find((u) => u.id === sessionData.userId)
-
-          if (user) {
-            if (user.banned) {
-              res.writeHead(403, { "Content-Type": "application/json" })
-              res.end(
-                JSON.stringify({
-                  success: false,
-                  message: "Sua conta foi banida. Entre em contato com um administrador.",
-                }),
-              )
-            } else {
-              res.writeHead(200, { "Content-Type": "application/json" })
-              res.end(
-                JSON.stringify({
-                  success: true,
-                  user,
-                  siteEnabled: loadSiteStatus().enabled,
-                }),
-              )
-            }
-          } else {
-            res.writeHead(404, { "Content-Type": "application/json" })
-            res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-          }
-        } else {
-          res.writeHead(401, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Sessão inválida" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/delete-message") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const messages = loadMessages()
-        const messageIndex = messages.findIndex((m) => m.id === data.messageId)
-
-        if (messageIndex !== -1) {
-          messages.splice(messageIndex, 1)
-          saveMessages(messages)
-
-          // Notificar todos os clientes
-          broadcast({
-            type: "messageDeleted",
-            messageId: data.messageId,
-            deleteType: "forEveryone",
-          })
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Mensagem não encontrada" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
   } else {
     res.writeHead(404, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "Not found" }))
@@ -391,10 +85,10 @@ const server = http.createServer((req, res) => {
 })
 
 // WebSocket Server
-const wss = new WebSocketServer({
+const wss = new WebSocketServer({ 
   server,
   perMessageDeflate: false,
-  clientTracking: true,
+  clientTracking: true
 })
 
 // Funções de broadcast
@@ -415,22 +109,24 @@ const broadcastToRoom = (roomId, data, excludeWs = null) => {
 
 const broadcastUserList = (roomId = null) => {
   const users = Array.from(connectedUsers.values())
-  const roomUsers = roomId ? users.filter((user) => userRooms.get(user.id) === roomId) : users
+  const roomUsers = roomId 
+    ? users.filter(user => userRooms.get(user.id) === roomId)
+    : users
 
-  const userList = roomUsers.map((user) => ({
+  const userList = roomUsers.map(user => ({
     id: user.id,
     name: user.name,
     email: user.email,
     color: user.color,
     avatar: user.avatar,
-    status: user.status || "online",
-    lastSeen: user.lastSeen,
+    status: user.status || 'online',
+    lastSeen: user.lastSeen
   }))
 
   const broadcastData = {
     type: "userList",
     users: userList,
-    roomId,
+    roomId
   }
 
   if (roomId) {
@@ -442,17 +138,15 @@ const broadcastUserList = (roomId = null) => {
 
 const broadcastTyping = (roomId) => {
   const typing = Array.from(typingUsers.get(roomId) || [])
-  const typingUserNames = typing
-    .map((userId) => {
-      const user = Array.from(connectedUsers.values()).find((u) => u.id === userId)
-      return user ? user.name : null
-    })
-    .filter(Boolean)
+  const typingUserNames = typing.map(userId => {
+    const user = Array.from(connectedUsers.values()).find(u => u.id === userId)
+    return user ? user.name : null
+  }).filter(Boolean)
 
   broadcastToRoom(roomId, {
     type: "typing",
     users: typingUserNames,
-    roomId,
+    roomId
   })
 }
 
@@ -461,56 +155,28 @@ const handleAuth = (ws, message) => {
   console.log("🔐 Verificando senha master:", message.masterPassword)
   if (message.masterPassword === MASTER_PASSWORD) {
     console.log("✅ Senha master correta!")
-    ws.send(
-      JSON.stringify({
-        type: "authSuccess",
-        message: "🔓 Acesso liberado! Bem-vindo ao GORILA CHAT.",
-      }),
-    )
+    ws.send(JSON.stringify({
+      type: "authSuccess",
+      message: "🔓 Acesso liberado! Bem-vindo ao GORILA CHAT."
+    }))
   } else {
     console.log("❌ Senha master incorreta!")
-    ws.send(
-      JSON.stringify({
-        type: "authError",
-        message: "❌ Senha incorreta! Acesso negado.",
-      }),
-    )
+    ws.send(JSON.stringify({
+      type: "authError",
+      message: "❌ Senha incorreta! Acesso negado."
+    }))
   }
 }
 
 const handleRegister = (ws, message) => {
   const users = loadUsers()
-  const existingUser = users.find((u) => u.email === message.email)
+  const existingUser = users.find(u => u.email === message.email)
 
   if (existingUser) {
-    ws.send(
-      JSON.stringify({
-        type: "registerError",
-        message: "📧 Email já cadastrado! Tente fazer login.",
-      }),
-    )
-    return
-  }
-
-  // Verificar se o email termina com @gorila.chat
-  if (!message.email.endsWith("@gorila.chat")) {
-    ws.send(
-      JSON.stringify({
-        type: "registerError",
-        message: "📧 Apenas emails @gorila.chat são permitidos.",
-      }),
-    )
-    return
-  }
-
-  // Verificar se a senha foi fornecida
-  if (!message.password || message.password.length < 6) {
-    ws.send(
-      JSON.stringify({
-        type: "registerError",
-        message: "🔑 A senha deve ter pelo menos 6 caracteres.",
-      }),
-    )
+    ws.send(JSON.stringify({
+      type: "registerError",
+      message: "📧 Email já cadastrado! Tente fazer login."
+    }))
     return
   }
 
@@ -518,15 +184,11 @@ const handleRegister = (ws, message) => {
     id: crypto.randomUUID(),
     name: message.name,
     email: message.email,
-    password: message.password, // Em produção, deveria ser hash
     color: message.color,
     avatar: message.avatar,
-    profileImage: message.profileImage || null,
-    status: "online",
-    banned: false,
+    status: 'online',
     createdAt: new Date().toISOString(),
-    lastSeen: new Date().toISOString(),
-    reports: [],
+    lastSeen: new Date().toISOString()
   }
 
   users.push(newUser)
@@ -534,106 +196,49 @@ const handleRegister = (ws, message) => {
   connectedUsers.set(ws, newUser)
   userRooms.set(newUser.id, "general")
 
-  // Criar sessão para o usuário
-  const sessionId = crypto.randomUUID()
-  const sessions = loadSessions()
-  sessions[sessionId] = {
-    userId: newUser.id,
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 dias
-  }
-  saveSessions(sessions)
-
   const rooms = loadRooms()
-  const messages = loadMessages()
-    .filter((m) => m.roomId === "general")
-    .slice(-50)
+  const messages = loadMessages().filter(m => m.roomId === "general").slice(-50)
 
-  ws.send(
-    JSON.stringify({
-      type: "registerSuccess",
-      user: newUser,
-      sessionId,
-      rooms,
-      messages,
-      currentRoom: "general",
-    }),
-  )
+  ws.send(JSON.stringify({
+    type: "registerSuccess",
+    user: newUser,
+    rooms,
+    messages,
+    currentRoom: "general"
+  }))
 
   broadcastUserList("general")
 }
 
 const handleLogin = (ws, message) => {
   const users = loadUsers()
-  const user = users.find((u) => u.email === message.email)
+  const user = users.find(u => u.email === message.email && u.name === message.name)
 
   if (!user) {
-    ws.send(
-      JSON.stringify({
-        type: "loginError",
-        message: "👤 Usuário não encontrado! Verifique seus dados.",
-      }),
-    )
+    ws.send(JSON.stringify({
+      type: "loginError",
+      message: "👤 Usuário não encontrado! Verifique seus dados."
+    }))
     return
   }
 
-  // Verificar senha
-  if (user.password !== message.password) {
-    ws.send(
-      JSON.stringify({
-        type: "loginError",
-        message: "🔑 Senha incorreta! Tente novamente.",
-      }),
-    )
-    return
-  }
-
-  // Verificar se o usuário está banido
-  if (user.banned) {
-    ws.send(
-      JSON.stringify({
-        type: "loginError",
-        message: "🚫 Sua conta foi banida. Entre em contato com um administrador.",
-      }),
-    )
-    return
-  }
-
-  if (!user.reports) user.reports = []
-
-  user.status = "online"
+  user.status = 'online'
   user.lastSeen = new Date().toISOString()
   saveUsers(users)
 
   connectedUsers.set(ws, user)
   userRooms.set(user.id, "general")
 
-  // Criar sessão para o usuário
-  const sessionId = crypto.randomUUID()
-  const sessions = loadSessions()
-  sessions[sessionId] = {
-    userId: user.id,
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 dias
-  }
-  saveSessions(sessions)
-
   const rooms = loadRooms()
-  const messages = loadMessages()
-    .filter((m) => m.roomId === "general")
-    .slice(-50)
+  const messages = loadMessages().filter(m => m.roomId === "general").slice(-50)
 
-  ws.send(
-    JSON.stringify({
-      type: "loginSuccess",
-      user,
-      sessionId,
-      rooms,
-      messages,
-      currentRoom: "general",
-      siteEnabled: loadSiteStatus().enabled,
-    }),
-  )
+  ws.send(JSON.stringify({
+    type: "loginSuccess",
+    user,
+    rooms,
+    messages,
+    currentRoom: "general"
+  }))
 
   broadcastUserList("general")
 }
@@ -658,7 +263,7 @@ const handleMessage = (ws, message) => {
     readBy: [user.id],
     reactions: {},
     edited: false,
-    replyTo: message.replyTo || null,
+    replyTo: message.replyTo || null
   }
 
   const messages = loadMessages()
@@ -667,7 +272,7 @@ const handleMessage = (ws, message) => {
 
   broadcastToRoom(roomId, {
     type: "newMessage",
-    message: newMessage,
+    message: newMessage
   })
 
   // Remover usuário da lista de digitando
@@ -683,7 +288,7 @@ const handleDeleteMessage = (ws, message) => {
   if (!user) return
 
   const messages = loadMessages()
-  const messageIndex = messages.findIndex((m) => m.id === message.messageId)
+  const messageIndex = messages.findIndex(m => m.id === message.messageId)
 
   if (messageIndex === -1) return
 
@@ -702,18 +307,16 @@ const handleDeleteMessage = (ws, message) => {
       type: "messageDeleted",
       messageId: message.messageId,
       deleteType: "forEveryone",
-      roomId,
+      roomId
     })
   } else if (message.deleteType === "forMe") {
-    ws.send(
-      JSON.stringify({
-        type: "messageDeleted",
-        messageId: message.messageId,
-        deleteType: "forMe",
-        userId: user.id,
-        roomId,
-      }),
-    )
+    ws.send(JSON.stringify({
+      type: "messageDeleted",
+      messageId: message.messageId,
+      deleteType: "forMe",
+      userId: user.id,
+      roomId
+    }))
   }
 }
 
@@ -722,7 +325,7 @@ const handleReaction = (ws, message) => {
   if (!user) return
 
   const messages = loadMessages()
-  const messageToUpdate = messages.find((m) => m.id === message.messageId)
+  const messageToUpdate = messages.find(m => m.id === message.messageId)
 
   if (!messageToUpdate) return
 
@@ -751,85 +354,8 @@ const handleReaction = (ws, message) => {
     type: "messageReaction",
     messageId: message.messageId,
     reactions: messageToUpdate.reactions,
-    roomId: messageToUpdate.roomId,
+    roomId: messageToUpdate.roomId
   })
-}
-
-const handleUpdateProfile = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const users = loadUsers()
-  const userIndex = users.findIndex((u) => u.id === user.id)
-
-  if (userIndex === -1) return
-
-  // Atualizar campos permitidos
-  if (message.name) users[userIndex].name = message.name
-  if (message.avatar) users[userIndex].avatar = message.avatar
-  if (message.profileImage !== undefined) users[userIndex].profileImage = message.profileImage
-
-  // Atualizar o usuário conectado
-  connectedUsers.set(ws, users[userIndex])
-
-  saveUsers(users)
-
-  ws.send(
-    JSON.stringify({
-      type: "profileUpdated",
-      user: users[userIndex],
-    }),
-  )
-
-  // Atualizar lista de usuários para todos
-  broadcastUserList()
-}
-
-const handleReportUser = (ws, message) => {
-  const reporter = connectedUsers.get(ws)
-  if (!reporter) return
-
-  const users = loadUsers()
-  const reportedUserIndex = users.findIndex((u) => u.id === message.reportedUserId)
-
-  if (reportedUserIndex === -1) return
-
-  // Inicializar array de reports se não existir
-  if (!users[reportedUserIndex].reports) {
-    users[reportedUserIndex].reports = []
-  }
-
-  // Verificar se o usuário já denunciou este usuário
-  const existingReport = users[reportedUserIndex].reports.find((r) => r.reporterId === reporter.id)
-
-  if (!existingReport) {
-    // Adicionar nova denúncia
-    users[reportedUserIndex].reports.push({
-      id: crypto.randomUUID(),
-      reporterId: reporter.id,
-      reporterName: reporter.name,
-      reason: message.reason || "Comportamento inadequado",
-      timestamp: new Date().toISOString(),
-    })
-
-    saveUsers(users)
-
-    ws.send(
-      JSON.stringify({
-        type: "reportSuccess",
-        message: "Usuário denunciado com sucesso!",
-      }),
-    )
-
-    console.log(`📢 Usuário ${users[reportedUserIndex].name} foi denunciado por ${reporter.name}`)
-  } else {
-    ws.send(
-      JSON.stringify({
-        type: "reportError",
-        message: "Você já denunciou este usuário.",
-      }),
-    )
-  }
 }
 
 const handleJoinRoom = (ws, message) => {
@@ -852,17 +378,13 @@ const handleJoinRoom = (ws, message) => {
   }
 
   // Enviar dados da nova sala
-  const messages = loadMessages()
-    .filter((m) => m.roomId === newRoomId)
-    .slice(-50)
-
-  ws.send(
-    JSON.stringify({
-      type: "roomJoined",
-      roomId: newRoomId,
-      messages,
-    }),
-  )
+  const messages = loadMessages().filter(m => m.roomId === newRoomId).slice(-50)
+  
+  ws.send(JSON.stringify({
+    type: "roomJoined",
+    roomId: newRoomId,
+    messages
+  }))
 
   broadcastUserList(newRoomId)
 }
@@ -898,12 +420,12 @@ const handleDisconnect = (ws) => {
   const user = connectedUsers.get(ws)
   if (user) {
     const roomId = userRooms.get(user.id)
-
+    
     // Atualizar status do usuário
     const users = loadUsers()
-    const userIndex = users.findIndex((u) => u.id === user.id)
+    const userIndex = users.findIndex(u => u.id === user.id)
     if (userIndex > -1) {
-      users[userIndex].status = "offline"
+      users[userIndex].status = 'offline'
       users[userIndex].lastSeen = new Date().toISOString()
       saveUsers(users)
     }
@@ -956,9 +478,6 @@ wss.on("connection", (ws) => {
         case "reaction":
           handleReaction(ws, message)
           break
-        case "updateProfile":
-          handleUpdateProfile(ws, message)
-          break
         case "joinRoom":
           handleJoinRoom(ws, message)
           break
@@ -967,9 +486,6 @@ wss.on("connection", (ws) => {
           break
         case "disconnect":
           handleDisconnect(ws)
-          break
-        case "reportUser":
-          handleReportUser(ws, message)
           break
         default:
           console.log("❓ Tipo de mensagem desconhecido:", message.type)
@@ -986,42 +502,17 @@ wss.on("connection", (ws) => {
 })
 
 // Limpeza automática de mensagens antigas (opcional)
-setInterval(
-  () => {
-    const messages = loadMessages()
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-
-    const filteredMessages = messages.filter((m) => new Date(m.timestamp) > oneWeekAgo)
-
-    if (filteredMessages.length !== messages.length) {
-      saveMessages(filteredMessages)
-      console.log(`🧹 Limpeza automática: ${messages.length - filteredMessages.length} mensagens antigas removidas`)
-    }
-  },
-  24 * 60 * 60 * 1000,
-) // Executar diariamente
-
-// Limpeza de sessões expiradas
-setInterval(
-  () => {
-    const sessions = loadSessions()
-    const now = new Date()
-    let changed = false
-
-    Object.keys(sessions).forEach((sessionId) => {
-      if (new Date(sessions[sessionId].expiresAt) < now) {
-        delete sessions[sessionId]
-        changed = true
-      }
-    })
-
-    if (changed) {
-      saveSessions(sessions)
-      console.log("🧹 Sessões expiradas removidas")
-    }
-  },
-  6 * 60 * 60 * 1000,
-) // Executar a cada 6 horas
+setInterval(() => {
+  const messages = loadMessages()
+  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  
+  const filteredMessages = messages.filter(m => new Date(m.timestamp) > oneWeekAgo)
+  
+  if (filteredMessages.length !== messages.length) {
+    saveMessages(filteredMessages)
+    console.log(`🧹 Limpeza automática: ${messages.length - filteredMessages.length} mensagens antigas removidas`)
+  }
+}, 24 * 60 * 60 * 1000) // Executar diariamente
 
 // Iniciar o servidor
 server.listen(PORT, "0.0.0.0", () => {
