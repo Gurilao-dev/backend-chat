@@ -1052,3 +1052,398 @@ module.exports = {
   messages,
   systemSettings,
 }
+
+const WebSocket = require("ws")
+const http = require("http")
+const fs = require("fs")
+const path = require("path")
+const crypto = require("crypto")
+
+// Configurações
+const PORT = process.env.PORT || 3000
+const MASTER_PASSWORD = "sitedogorilão"
+
+// Dados em memória (em produção, usar banco de dados)
+const users = new Map()
+const messages = []
+const connectedClients = new Map()
+const bannedUsers = new Set()
+const reportedMessages = new Set()
+const systemSettings = {
+  maxMessageLength: 500,
+  maxFileSize: 5 * 1024 * 1024, // 5MB
+  allowImages: true,
+  allowReactions: true,
+  registrationEnabled: true,
+  autoModeration: false,
+  bannedWords: [],
+  maintenanceMode: false,
+}
+
+// Estatísticas do sistema
+const systemStats = {
+  serverStartTime: Date.now(),
+  totalConnections: 0,
+  messagesCount: 0,
+}
+
+// Função para carregar dados do localStorage simulado
+function loadDataFromFrontend() {
+  // Esta função será chamada quando o admin enviar dados
+  console.log("📊 Dados carregados do frontend")
+}
+
+// Função para salvar dados para o frontend
+function saveDataToFrontend() {
+  // Enviar dados para todos os admins conectados
+  const adminData = {
+    users: Array.from(users.entries()),
+    messages: messages,
+    bannedUsers: Array.from(bannedUsers),
+    reportedMessages: Array.from(reportedMessages),
+    systemSettings: systemSettings,
+    systemStats: systemStats,
+    lastSaved: new Date().toISOString(),
+  }
+
+  broadcastToAdmins({
+    type: "dataSync",
+    data: adminData,
+  })
+}
+
+// Criar servidor HTTP
+const server = http.createServer((req, res) => {
+  // CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "*")
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(200)
+    res.end()
+    return
+  }
+
+  // Health check endpoint
+  if (req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        uptime: Date.now() - systemStats.serverStartTime,
+        users: users.size,
+        messages: messages.length,
+      }),
+    )
+    return
+  }
+
+  // API endpoints
+  if (req.url === "/api/stats") {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(
+      JSON.stringify({
+        totalUsers: users.size,
+        onlineUsers: connectedClients.size,
+        totalMessages: messages.length,
+        bannedUsers: bannedUsers.size,
+        reportedMessages: reportedMessages.size,
+        uptime: Date.now() - systemStats.serverStartTime,
+      }),
+    )
+    return
+  }
+
+  // Servir arquivos estáticos (se necessário)
+  res.writeHead(404)
+  res.end("Not Found")
+})
+
+// Criar servidor WebSocket
+const wss = new WebSocket.Server({ server })
+
+// Função para gerar ID único
+function generateId() {
+  return crypto.randomBytes(16).toString("hex")
+}
+
+// Função para validar senha master
+function validateMasterPassword(password) {
+  return password === MASTER_PASSWORD
+}
+
+// Função para broadcast para todos os clientes
+function broadcast(data, excludeClient = null) {
+  const message = JSON.stringify(data)
+  connectedClients.forEach((clientData, client) => {
+    if (client !== excludeClient && client.readyState === WebSocket.OPEN && !clientData.isAdmin) {
+      client.send(message)
+    }
+  })
+}
+
+// Função para broadcast apenas para admins
+function broadcastToAdmins(data) {
+  const message = JSON.stringify(data)
+  connectedClients.forEach((clientData, client) => {
+    if (clientData.isAdmin && client.readyState === WebSocket.OPEN) {
+      client.send(message)
+    }
+  })
+}
+
+// Função para verificar palavras banidas
+function containsBannedWords(text) {
+  if (!systemSettings.autoModeration || !systemSettings.bannedWords.length) {
+    return false
+  }
+
+  const lowerText = text.toLowerCase()
+  return systemSettings.bannedWords.some((word) => lowerText.includes(word.toLowerCase()))
+}
+
+// Função para limpar usuários offline
+function cleanupOfflineUsers() {
+  const onlineUserIds = new Set()
+  connectedClients.forEach((clientData) => {
+    if (clientData.user && !clientData.isAdmin) {
+      onlineUserIds.add(clientData.user.id)
+    }
+  })
+
+  users.forEach((user, userId) => {
+    if (!onlineUserIds.has(userId)) {
+      user.online = false
+      user.lastSeen = new Date().toISOString()
+    }
+  })
+}
+
+// Função para enviar dados iniciais para o admin
+function sendAdminData(ws) {
+  const adminData = {
+    users: Array.from(users.entries()),
+    messages: messages,
+    bannedUsers: Array.from(bannedUsers),
+    reportedMessages: Array.from(reportedMessages),
+    systemSettings: systemSettings,
+    systemStats: systemStats,
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: "initialAdminData",
+      data: adminData,
+    }),
+  )
+}
+
+// Função para broadcast a lista de usuários
+function broadcastUserList() {
+  const userList = Array.from(users.values()).map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar,
+    color: user.color,
+    profileImage: user.profileImage,
+    online: user.online,
+    lastSeen: user.lastSeen,
+  }))
+
+  broadcast({
+    type: "userListUpdate",
+    users: userList,
+  })
+}
+
+// Conexão WebSocket
+wss.on("connection", (ws, req) => {
+  console.log("🔌 Nova conexão WebSocket")
+  systemStats.totalConnections++
+
+  // Dados do cliente
+  const clientData = {
+    id: generateId(),
+    ip: req.socket.remoteAddress,
+    userAgent: req.headers["user-agent"],
+    connectedAt: new Date().toISOString(),
+    isAuthenticated: false,
+    isAdmin: false,
+    user: null,
+  }
+
+  connectedClients.set(ws, clientData)
+
+  // Enviar status de conexão
+  ws.send(
+    JSON.stringify({
+      type: "connected",
+      clientId: clientData.id,
+    }),
+  )
+
+  // Manipular mensagens
+  ws.on("message", async (data) => {
+    try {
+      const message = JSON.parse(data)
+
+      // Autenticação master password
+      if (message.type === "auth") {
+        if (validateMasterPassword(message.masterPassword)) {
+          clientData.isAuthenticated = true
+          ws.send(
+            JSON.stringify({
+              type: "authSuccess",
+              message: "Autenticado com sucesso",
+            }),
+          )
+        } else {
+          ws.send(
+            JSON.stringify({
+              type: "authError",
+              message: "Senha master incorreta",
+            }),
+          )
+        }
+        return
+      }
+
+      // Verificar autenticação
+      if (!clientData.isAuthenticated) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Não autenticado",
+          }),
+        )
+        return
+      }
+
+      // Verificar modo manutenção para usuários normais
+      if (systemSettings.maintenanceMode && !clientData.isAdmin && message.type !== "adminAuth") {
+        ws.send(
+          JSON.stringify({
+            type: "maintenanceMode",
+            message: "Sistema em manutenção. Tente novamente mais tarde.",
+          }),
+        )
+        return
+      }
+
+      // Autenticação admin
+      if (message.type === "adminAuth") {
+        if (validateMasterPassword(message.masterPassword)) {
+          clientData.isAdmin = true
+          ws.send(
+            JSON.stringify({
+              type: "adminAuthSuccess",
+              message: "Admin autenticado",
+            }),
+          )
+          
+          // Enviar dados iniciais para o admin
+          setTimeout(() => {
+            sendAdminData(ws)
+          }, 1000)
+        } else {
+          ws.send(
+            JSON.stringify({
+              type: "adminAuthError",
+              message: "Senha admin incorreta",
+            }),
+          )
+        }
+        return
+      }
+
+      // Login
+      if (message.type === "login") {
+        const { name, email, password } = message
+
+        if (!name || !email || !password) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Nome, email e senha são obrigatórios",
+            }),
+          )
+          return
+        }
+
+        // Verificar se usuário existe
+        const user = Array.from(users.values()).find((u) => u.email === email)
+
+        if (!user) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Usuário não encontrado. Faça seu cadastro primeiro.",
+            }),
+          )
+          return
+        }
+
+        // Verificar senha
+        if (user.password !== password) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Senha incorreta",
+            }),
+          )
+          return
+        }
+
+        // Verificar se está banido
+        if (bannedUsers.has(user.id)) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Usuário banido do sistema",
+            }),
+          )
+          return
+        }
+
+        // Atualizar status online
+        user.online = true
+        user.lastSeen = new Date().toISOString()
+        clientData.user = user
+
+        ws.send(
+          JSON.stringify({
+            type: "loginSuccess",
+            user: user,
+          }),
+        )
+
+        // Broadcast lista de usuários atualizada
+        broadcastUserList()
+
+        console.log(`✅ Login: ${user.name} (${user.email})`)
+        return
+      }
+
+      // Registro
+      if (message.type === "register") {
+        if (!systemSettings.registrationEnabled) {
+          ws.send(
+            JSON.stringify({
+              type: "registerError",
+              message: "Cadastros estão desabilitados",
+            }),
+          )
+          return
+        }
+
+        const { name, email, password, avatar, color, profileImage } = message
+
+        if (!name || !email || !password) {
+          ws.send(
+            JSON.stringify({
+              type: "registerError",
+              message: "Todos os campos são obrigatórios",
+            }),
+          )
