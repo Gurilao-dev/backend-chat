@@ -244,6 +244,17 @@ wss.on("connection", (ws, req) => {
         return
       }
 
+      // Verificar modo manutenção para usuários normais
+      if (systemSettings.maintenanceMode && !clientData.isAdmin && message.type !== "adminAuth") {
+        ws.send(
+          JSON.stringify({
+            type: "maintenanceMode",
+            message: "Sistema em manutenção. Tente novamente mais tarde.",
+          }),
+        )
+        return
+      }
+
       // Autenticação admin
       if (message.type === "adminAuth") {
         if (validateMasterPassword(message.masterPassword)) {
@@ -278,13 +289,13 @@ wss.on("connection", (ws, req) => {
 
       // Login
       if (message.type === "login") {
-        const { name, email } = message
+        const { name, email, password } = message
 
-        if (!name || !email) {
+        if (!name || !email || !password) {
           ws.send(
             JSON.stringify({
               type: "loginError",
-              message: "Nome e email são obrigatórios",
+              message: "Nome, email e senha são obrigatórios",
             }),
           )
           return
@@ -298,6 +309,17 @@ wss.on("connection", (ws, req) => {
             JSON.stringify({
               type: "loginError",
               message: "Usuário não encontrado. Faça seu cadastro primeiro.",
+            }),
+          )
+          return
+        }
+
+        // Verificar senha
+        if (user.password !== password) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Senha incorreta",
             }),
           )
           return
@@ -323,6 +345,15 @@ wss.on("connection", (ws, req) => {
           JSON.stringify({
             type: "loginSuccess",
             user: user,
+          }),
+        )
+
+        // Enviar mensagens existentes
+        const messageList = messages.slice(-50)
+        ws.send(
+          JSON.stringify({
+            type: "messageList",
+            messages: messageList,
           }),
         )
 
@@ -700,6 +731,48 @@ wss.on("connection", (ws, req) => {
           timestamp: new Date().toISOString(),
         })
 
+        return
+      }
+
+      // Admin data request
+      if (message.type === "adminData") {
+        if (!clientData.isAdmin) return
+
+        const adminUserList = Array.from(users.values()).map((user) => ({
+          ...user,
+          banned: bannedUsers.has(user.id),
+        }))
+
+        ws.send(
+          JSON.stringify({
+            type: "adminUserList",
+            users: adminUserList,
+          }),
+        )
+
+        ws.send(
+          JSON.stringify({
+            type: "adminMessageList",
+            messages: messages,
+          }),
+        )
+        return
+      }
+
+      // Toggle site maintenance
+      if (message.type === "toggleSite") {
+        if (!clientData.isAdmin) return
+
+        systemSettings.maintenanceMode = !systemSettings.maintenanceMode
+
+        ws.send(
+          JSON.stringify({
+            type: "maintenanceModeToggled",
+            maintenanceMode: systemSettings.maintenanceMode,
+          }),
+        )
+
+        saveDataToJSON()
         return
       }
 
