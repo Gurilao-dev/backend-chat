@@ -1,84 +1,40 @@
-const { WebSocketServer } = require("ws")
+const WebSocket = require("ws")
+const http = require("http")
 const fs = require("fs")
 const path = require("path")
 const crypto = require("crypto")
-const http = require("http")
 
 // Configurações
-const PORT = process.env.PORT || 8080
-const DATA_DIR = path.join(__dirname, "data")
-const USERS_FILE = path.join(DATA_DIR, "users.json")
-const MESSAGES_FILE = path.join(DATA_DIR, "messages.json")
-const ROOMS_FILE = path.join(DATA_DIR, "rooms.json")
-const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json")
+const PORT = process.env.PORT || 3000
 const MASTER_PASSWORD = "sitedogorilão"
-const ADMIN_PASSWORD = "steam.jv.com"
-const SITE_STATUS_FILE = path.join(DATA_DIR, "site_status.json")
 
-// Criar diretório de dados
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
+// Dados em memória (em produção, usar banco de dados)
+let users = new Map()
+let messages = []
+const connectedClients = new Map()
+let bannedUsers = new Set()
+let reportedMessages = new Set()
+let systemSettings = {
+  maxMessageLength: 500,
+  maxFileSize: 5 * 1024 * 1024, // 5MB
+  allowImages: true,
+  allowReactions: true,
+  registrationEnabled: true,
+  autoModeration: false,
+  bannedWords: [],
+  maintenanceMode: false,
 }
 
-// Inicializar arquivos JSON
-const initializeFile = (filePath, defaultData = []) => {
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2))
-  }
+// Estatísticas do sistema
+let systemStats = {
+  serverStartTime: Date.now(),
+  totalConnections: 0,
+  messagesCount: 0,
 }
 
-initializeFile(USERS_FILE)
-initializeFile(MESSAGES_FILE)
-initializeFile(ROOMS_FILE, [
-  { id: "general", name: "Geral", description: "Chat principal", createdAt: new Date().toISOString() },
-])
-initializeFile(SESSIONS_FILE, {})
-initializeFile(SITE_STATUS_FILE, { enabled: true })
-
-// Funções de dados
-const loadData = (filePath) => {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"))
-  } catch {
-    return []
-  }
-}
-
-const saveData = (filePath, data) => {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
-}
-
-const loadUsers = () => loadData(USERS_FILE)
-const saveUsers = (users) => saveData(USERS_FILE, users)
-const loadMessages = () => loadData(MESSAGES_FILE)
-const saveMessages = (messages) => saveData(MESSAGES_FILE, messages)
-const loadRooms = () => loadData(ROOMS_FILE)
-const saveRooms = (rooms) => saveData(ROOMS_FILE, rooms)
-const loadSessions = () => {
-  try {
-    return JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"))
-  } catch {
-    return {}
-  }
-}
-const saveSessions = (sessions) => saveData(SESSIONS_FILE, sessions)
-const loadSiteStatus = () => {
-  try {
-    return JSON.parse(fs.readFileSync(SITE_STATUS_FILE, "utf8"))
-  } catch {
-    return { enabled: true }
-  }
-}
-const saveSiteStatus = (status) => saveData(SITE_STATUS_FILE, status)
-
-// Estado do servidor
-const connectedUsers = new Map()
-const userRooms = new Map() // userId -> roomId
-const typingUsers = new Map() // roomId -> Set of userIds
-
-// Criar servidor HTTP para o Render
+// Criar servidor HTTP
 const server = http.createServer((req, res) => {
-  // Configurar CORS para permitir conexões do InfinityFree
+  // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
   res.setHeader("Access-Control-Allow-Headers", "Content-Type")
@@ -89,907 +45,937 @@ const server = http.createServer((req, res) => {
     return
   }
 
-  if (req.url === "/" || req.url === "/health") {
+  // Health check endpoint
+  if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" })
     res.end(
       JSON.stringify({
         status: "ok",
-        message: "GORILA CHAT Backend is running!",
-        timestamp: new Date().toISOString(),
-        connectedUsers: connectedUsers.size,
-        siteEnabled: loadSiteStatus().enabled,
+        uptime: Date.now() - systemStats.serverStartTime,
+        users: users.size,
+        messages: messages.length,
       }),
     )
-  } else if (req.url === "/admin/verify") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        if (data.password === ADMIN_PASSWORD) {
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(401, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Senha incorreta" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/users") {
-    res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(loadUsers()))
-  } else if (req.url === "/admin/messages") {
-    res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(loadMessages()))
-  } else if (req.url === "/admin/site-status") {
-    res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(loadSiteStatus()))
-  } else if (req.url === "/admin/update-site-status") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        saveSiteStatus(data)
-        res.writeHead(200, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: true }))
-
-        // Notificar todos os clientes sobre a mudança de status
-        broadcast({
-          type: "siteStatusChanged",
-          enabled: data.enabled,
-        })
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/update-user") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const userData = JSON.parse(body)
-        const users = loadUsers()
-        const userIndex = users.findIndex((u) => u.id === userData.id)
-
-        if (userIndex !== -1) {
-          users[userIndex] = { ...users[userIndex], ...userData }
-          saveUsers(users)
-
-          // Notificar o usuário se estiver online
-          for (const [ws, user] of connectedUsers.entries()) {
-            if (user.id === userData.id) {
-              ws.send(
-                JSON.stringify({
-                  type: "userUpdated",
-                  user: users[userIndex],
-                }),
-              )
-              break
-            }
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/delete-user") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const users = loadUsers()
-        const userIndex = users.findIndex((u) => u.id === data.userId)
-
-        if (userIndex !== -1) {
-          users.splice(userIndex, 1)
-          saveUsers(users)
-
-          // Desconectar o usuário se estiver online
-          for (const [ws, user] of connectedUsers.entries()) {
-            if (user.id === data.userId) {
-              ws.send(
-                JSON.stringify({
-                  type: "accountDeleted",
-                }),
-              )
-              ws.close()
-              break
-            }
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/ban-user") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const users = loadUsers()
-        const userIndex = users.findIndex((u) => u.id === data.userId)
-
-        if (userIndex !== -1) {
-          users[userIndex].banned = data.banned
-          saveUsers(users)
-
-          // Notificar o usuário se estiver online
-          for (const [ws, user] of connectedUsers.entries()) {
-            if (user.id === data.userId) {
-              ws.send(
-                JSON.stringify({
-                  type: "userBanned",
-                  banned: data.banned,
-                }),
-              )
-              if (data.banned) {
-                ws.close()
-              }
-              break
-            }
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/clear-chat") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        let messages = loadMessages()
-
-        if (data.type === "all") {
-          messages = []
-        } else if (data.type === "images") {
-          messages = messages.filter((m) => m.type !== "image")
-        } else if (data.type === "text") {
-          messages = messages.filter((m) => m.type !== "text")
-        }
-
-        saveMessages(messages)
-
-        // Notificar todos os clientes
-        broadcast({
-          type: "chatCleared",
-          clearType: data.type,
-        })
-
-        res.writeHead(200, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: true }))
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/check-session") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const sessions = loadSessions()
-        const sessionData = sessions[data.sessionId]
-
-        if (sessionData) {
-          const users = loadUsers()
-          const user = users.find((u) => u.id === sessionData.userId)
-
-          if (user) {
-            if (user.banned) {
-              res.writeHead(403, { "Content-Type": "application/json" })
-              res.end(
-                JSON.stringify({
-                  success: false,
-                  message: "Sua conta foi banida. Entre em contato com um administrador.",
-                }),
-              )
-            } else {
-              res.writeHead(200, { "Content-Type": "application/json" })
-              res.end(
-                JSON.stringify({
-                  success: true,
-                  user,
-                  siteEnabled: loadSiteStatus().enabled,
-                }),
-              )
-            }
-          } else {
-            res.writeHead(404, { "Content-Type": "application/json" })
-            res.end(JSON.stringify({ success: false, message: "Usuário não encontrado" }))
-          }
-        } else {
-          res.writeHead(401, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Sessão inválida" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else if (req.url === "/admin/delete-message") {
-    let body = ""
-    req.on("data", (chunk) => {
-      body += chunk.toString()
-    })
-    req.on("end", () => {
-      try {
-        const data = JSON.parse(body)
-        const messages = loadMessages()
-        const messageIndex = messages.findIndex((m) => m.id === data.messageId)
-
-        if (messageIndex !== -1) {
-          messages.splice(messageIndex, 1)
-          saveMessages(messages)
-
-          // Notificar todos os clientes
-          broadcast({
-            type: "messageDeleted",
-            messageId: data.messageId,
-            deleteType: "forEveryone",
-          })
-
-          res.writeHead(200, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: true }))
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" })
-          res.end(JSON.stringify({ success: false, message: "Mensagem não encontrada" }))
-        }
-      } catch (e) {
-        res.writeHead(400, { "Content-Type": "application/json" })
-        res.end(JSON.stringify({ success: false, message: "Requisição inválida" }))
-      }
-    })
-  } else {
-    res.writeHead(404, { "Content-Type": "application/json" })
-    res.end(JSON.stringify({ error: "Not found" }))
+    return
   }
+
+  // API endpoints
+  if (req.url === "/api/stats") {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(
+      JSON.stringify({
+        totalUsers: users.size,
+        onlineUsers: connectedClients.size,
+        totalMessages: messages.length,
+        bannedUsers: bannedUsers.size,
+        reportedMessages: reportedMessages.size,
+        uptime: Date.now() - systemStats.serverStartTime,
+      }),
+    )
+    return
+  }
+
+  // Servir arquivos estáticos (se necessário)
+  res.writeHead(404)
+  res.end("Not Found")
 })
 
-// WebSocket Server
-const wss = new WebSocketServer({
-  server,
-  perMessageDeflate: false,
-  clientTracking: true,
-})
+// Criar servidor WebSocket
+const wss = new WebSocket.Server({ server })
 
-// Funções de broadcast
-const broadcast = (data, excludeWs = null, roomId = null) => {
-  wss.clients.forEach((client) => {
-    if (client !== excludeWs && client.readyState === client.OPEN) {
-      const user = connectedUsers.get(client)
-      if (!roomId || (user && userRooms.get(user.id) === roomId)) {
-        client.send(JSON.stringify(data))
-      }
+// Função para gerar ID único
+function generateId() {
+  return crypto.randomBytes(16).toString("hex")
+}
+
+// Função para validar senha master
+function validateMasterPassword(password) {
+  return password === MASTER_PASSWORD
+}
+
+// Função para broadcast para todos os clientes
+function broadcast(data, excludeClient = null) {
+  const message = JSON.stringify(data)
+  connectedClients.forEach((clientData, client) => {
+    if (client !== excludeClient && client.readyState === WebSocket.OPEN) {
+      client.send(message)
     }
   })
 }
 
-const broadcastToRoom = (roomId, data, excludeWs = null) => {
-  broadcast(data, excludeWs, roomId)
-}
-
-const broadcastUserList = (roomId = null) => {
-  const users = Array.from(connectedUsers.values())
-  const roomUsers = roomId ? users.filter((user) => userRooms.get(user.id) === roomId) : users
-
-  const userList = roomUsers.map((user) => ({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    color: user.color,
-    avatar: user.avatar,
-    status: user.status || "online",
-    lastSeen: user.lastSeen,
-  }))
-
-  const broadcastData = {
-    type: "userList",
-    users: userList,
-    roomId,
-  }
-
-  if (roomId) {
-    broadcastToRoom(roomId, broadcastData)
-  } else {
-    broadcast(broadcastData)
-  }
-}
-
-const broadcastTyping = (roomId) => {
-  const typing = Array.from(typingUsers.get(roomId) || [])
-  const typingUserNames = typing
-    .map((userId) => {
-      const user = Array.from(connectedUsers.values()).find((u) => u.id === userId)
-      return user ? user.name : null
-    })
-    .filter(Boolean)
-
-  broadcastToRoom(roomId, {
-    type: "typing",
-    users: typingUserNames,
-    roomId,
+// Função para broadcast apenas para admins
+function broadcastToAdmins(data) {
+  const message = JSON.stringify(data)
+  connectedClients.forEach((clientData, client) => {
+    if (clientData.isAdmin && client.readyState === WebSocket.OPEN) {
+      client.send(message)
+    }
   })
 }
 
-// Handlers
-const handleAuth = (ws, message) => {
-  console.log("🔐 Verificando senha master:", message.masterPassword)
-  if (message.masterPassword === MASTER_PASSWORD) {
-    console.log("✅ Senha master correta!")
-    ws.send(
-      JSON.stringify({
-        type: "authSuccess",
-        message: "🔓 Acesso liberado! Bem-vindo ao GORILA CHAT.",
-      }),
-    )
-  } else {
-    console.log("❌ Senha master incorreta!")
-    ws.send(
-      JSON.stringify({
-        type: "authError",
-        message: "❌ Senha incorreta! Acesso negado.",
-      }),
-    )
+// Função para salvar dados em JSON
+function saveDataToJSON() {
+  const data = {
+    users: Array.from(users.entries()),
+    messages: messages,
+    bannedUsers: Array.from(bannedUsers),
+    reportedMessages: Array.from(reportedMessages),
+    systemSettings: systemSettings,
+    systemStats: systemStats,
+    lastSaved: new Date().toISOString(),
+  }
+
+  try {
+    fs.writeFileSync("gorila-chat-data.json", JSON.stringify(data, null, 2))
+    console.log("✅ Dados salvos em gorila-chat-data.json")
+  } catch (error) {
+    console.error("❌ Erro ao salvar dados:", error)
   }
 }
 
-const handleRegister = (ws, message) => {
-  const users = loadUsers()
-  const existingUser = users.find((u) => u.email === message.email)
+// Função para carregar dados do JSON
+function loadDataFromJSON() {
+  try {
+    if (fs.existsSync("gorila-chat-data.json")) {
+      const data = JSON.parse(fs.readFileSync("gorila-chat-data.json", "utf8"))
 
-  if (existingUser) {
-    ws.send(
-      JSON.stringify({
-        type: "registerError",
-        message: "📧 Email já cadastrado! Tente fazer login.",
-      }),
-    )
-    return
+      users = new Map(data.users || [])
+      messages = data.messages || []
+      bannedUsers = new Set(data.bannedUsers || [])
+      reportedMessages = new Set(data.reportedMessages || [])
+      systemSettings = { ...systemSettings, ...(data.systemSettings || {}) }
+      systemStats = { ...systemStats, ...(data.systemStats || {}) }
+
+      console.log("✅ Dados carregados do arquivo JSON")
+      console.log(`📊 Usuários: ${users.size}, Mensagens: ${messages.length}`)
+    }
+  } catch (error) {
+    console.error("❌ Erro ao carregar dados:", error)
   }
-
-  // Verificar se o email termina com @gorila.chat
-  if (!message.email.endsWith("@gorila.chat")) {
-    ws.send(
-      JSON.stringify({
-        type: "registerError",
-        message: "📧 Apenas emails @gorila.chat são permitidos.",
-      }),
-    )
-    return
-  }
-
-  // Verificar se a senha foi fornecida
-  if (!message.password || message.password.length < 6) {
-    ws.send(
-      JSON.stringify({
-        type: "registerError",
-        message: "🔑 A senha deve ter pelo menos 6 caracteres.",
-      }),
-    )
-    return
-  }
-
-  const newUser = {
-    id: crypto.randomUUID(),
-    name: message.name,
-    email: message.email,
-    password: message.password, // Em produção, deveria ser hash
-    color: message.color,
-    avatar: message.avatar,
-    profileImage: message.profileImage || null,
-    status: "online",
-    banned: false,
-    createdAt: new Date().toISOString(),
-    lastSeen: new Date().toISOString(),
-  }
-
-  users.push(newUser)
-  saveUsers(users)
-  connectedUsers.set(ws, newUser)
-  userRooms.set(newUser.id, "general")
-
-  // Criar sessão para o usuário
-  const sessionId = crypto.randomUUID()
-  const sessions = loadSessions()
-  sessions[sessionId] = {
-    userId: newUser.id,
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 dias
-  }
-  saveSessions(sessions)
-
-  const rooms = loadRooms()
-  const messages = loadMessages()
-    .filter((m) => m.roomId === "general")
-    .slice(-50)
-
-  ws.send(
-    JSON.stringify({
-      type: "registerSuccess",
-      user: newUser,
-      sessionId,
-      rooms,
-      messages,
-      currentRoom: "general",
-    }),
-  )
-
-  broadcastUserList("general")
 }
 
-const handleLogin = (ws, message) => {
-  const users = loadUsers()
-  const user = users.find((u) => u.email === message.email)
-
-  if (!user) {
-    ws.send(
-      JSON.stringify({
-        type: "loginError",
-        message: "👤 Usuário não encontrado! Verifique seus dados.",
-      }),
-    )
-    return
+// Função para verificar palavras banidas
+function containsBannedWords(text) {
+  if (!systemSettings.autoModeration || !systemSettings.bannedWords.length) {
+    return false
   }
 
-  // Verificar senha
-  if (user.password !== message.password) {
-    ws.send(
-      JSON.stringify({
-        type: "loginError",
-        message: "🔑 Senha incorreta! Tente novamente.",
-      }),
-    )
-    return
-  }
-
-  // Verificar se o usuário está banido
-  if (user.banned) {
-    ws.send(
-      JSON.stringify({
-        type: "loginError",
-        message: "🚫 Sua conta foi banida. Entre em contato com um administrador.",
-      }),
-    )
-    return
-  }
-
-  user.status = "online"
-  user.lastSeen = new Date().toISOString()
-  saveUsers(users)
-
-  connectedUsers.set(ws, user)
-  userRooms.set(user.id, "general")
-
-  // Criar sessão para o usuário
-  const sessionId = crypto.randomUUID()
-  const sessions = loadSessions()
-  sessions[sessionId] = {
-    userId: user.id,
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 dias
-  }
-  saveSessions(sessions)
-
-  const rooms = loadRooms()
-  const messages = loadMessages()
-    .filter((m) => m.roomId === "general")
-    .slice(-50)
-
-  ws.send(
-    JSON.stringify({
-      type: "loginSuccess",
-      user,
-      sessionId,
-      rooms,
-      messages,
-      currentRoom: "general",
-      siteEnabled: loadSiteStatus().enabled,
-    }),
-  )
-
-  broadcastUserList("general")
+  const lowerText = text.toLowerCase()
+  return systemSettings.bannedWords.some((word) => lowerText.includes(word.toLowerCase()))
 }
 
-const handleMessage = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const roomId = userRooms.get(user.id) || "general"
-
-  const newMessage = {
-    id: crypto.randomUUID(),
-    userId: user.id,
-    userName: user.name,
-    userEmail: user.email,
-    userColor: user.color,
-    userAvatar: user.avatar,
-    content: message.content,
-    type: message.messageType || "text",
-    roomId,
-    timestamp: new Date().toISOString(),
-    readBy: [user.id],
-    reactions: {},
-    edited: false,
-    replyTo: message.replyTo || null,
-  }
-
-  const messages = loadMessages()
-  messages.push(newMessage)
-  saveMessages(messages)
-
-  broadcastToRoom(roomId, {
-    type: "newMessage",
-    message: newMessage,
+// Função para limpar usuários offline
+function cleanupOfflineUsers() {
+  const onlineUserIds = new Set()
+  connectedClients.forEach((clientData) => {
+    if (clientData.user) {
+      onlineUserIds.add(clientData.user.id)
+    }
   })
 
-  // Remover usuário da lista de digitando
-  const typing = typingUsers.get(roomId)
-  if (typing && typing.has(user.id)) {
-    typing.delete(user.id)
-    broadcastTyping(roomId)
-  }
-}
-
-const handleDeleteMessage = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const messages = loadMessages()
-  const messageIndex = messages.findIndex((m) => m.id === message.messageId)
-
-  if (messageIndex === -1) return
-
-  const messageToDelete = messages[messageIndex]
-  const roomId = messageToDelete.roomId
-
-  if (messageToDelete.userId !== user.id && message.deleteType !== "forEveryone") {
-    return
-  }
-
-  if (message.deleteType === "forEveryone" && messageToDelete.userId === user.id) {
-    messages.splice(messageIndex, 1)
-    saveMessages(messages)
-
-    broadcastToRoom(roomId, {
-      type: "messageDeleted",
-      messageId: message.messageId,
-      deleteType: "forEveryone",
-      roomId,
-    })
-  } else if (message.deleteType === "forMe") {
-    ws.send(
-      JSON.stringify({
-        type: "messageDeleted",
-        messageId: message.messageId,
-        deleteType: "forMe",
-        userId: user.id,
-        roomId,
-      }),
-    )
-  }
-}
-
-const handleReaction = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const messages = loadMessages()
-  const messageToUpdate = messages.find((m) => m.id === message.messageId)
-
-  if (!messageToUpdate) return
-
-  if (!messageToUpdate.reactions) {
-    messageToUpdate.reactions = {}
-  }
-
-  const emoji = message.emoji
-  if (!messageToUpdate.reactions[emoji]) {
-    messageToUpdate.reactions[emoji] = []
-  }
-
-  const userIndex = messageToUpdate.reactions[emoji].indexOf(user.id)
-  if (userIndex > -1) {
-    messageToUpdate.reactions[emoji].splice(userIndex, 1)
-    if (messageToUpdate.reactions[emoji].length === 0) {
-      delete messageToUpdate.reactions[emoji]
+  users.forEach((user, userId) => {
+    if (!onlineUserIds.has(userId)) {
+      user.online = false
+      user.lastSeen = new Date().toISOString()
     }
-  } else {
-    messageToUpdate.reactions[emoji].push(user.id)
-  }
-
-  saveMessages(messages)
-
-  broadcastToRoom(messageToUpdate.roomId, {
-    type: "messageReaction",
-    messageId: message.messageId,
-    reactions: messageToUpdate.reactions,
-    roomId: messageToUpdate.roomId,
   })
-}
-
-const handleUpdateProfile = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const users = loadUsers()
-  const userIndex = users.findIndex((u) => u.id === user.id)
-
-  if (userIndex === -1) return
-
-  // Atualizar campos permitidos
-  if (message.name) users[userIndex].name = message.name
-  if (message.profileImage) users[userIndex].profileImage = message.profileImage
-
-  // Atualizar o usuário conectado
-  connectedUsers.set(ws, users[userIndex])
-
-  saveUsers(users)
-
-  ws.send(
-    JSON.stringify({
-      type: "profileUpdated",
-      user: users[userIndex],
-    }),
-  )
-
-  // Atualizar lista de usuários para todos
-  broadcastUserList()
-}
-
-const handleJoinRoom = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const oldRoomId = userRooms.get(user.id)
-  const newRoomId = message.roomId
-
-  userRooms.set(user.id, newRoomId)
-
-  // Remover das listas de digitando
-  if (oldRoomId) {
-    const oldTyping = typingUsers.get(oldRoomId)
-    if (oldTyping && oldTyping.has(user.id)) {
-      oldTyping.delete(user.id)
-      broadcastTyping(oldRoomId)
-    }
-    broadcastUserList(oldRoomId)
-  }
-
-  // Enviar dados da nova sala
-  const messages = loadMessages()
-    .filter((m) => m.roomId === newRoomId)
-    .slice(-50)
-
-  ws.send(
-    JSON.stringify({
-      type: "roomJoined",
-      roomId: newRoomId,
-      messages,
-    }),
-  )
-
-  broadcastUserList(newRoomId)
-}
-
-const handleTyping = (ws, message) => {
-  const user = connectedUsers.get(ws)
-  if (!user) return
-
-  const roomId = userRooms.get(user.id)
-  if (!roomId) return
-
-  if (!typingUsers.has(roomId)) {
-    typingUsers.set(roomId, new Set())
-  }
-
-  const typing = typingUsers.get(roomId)
-
-  if (message.isTyping) {
-    typing.add(user.id)
-    // Auto-remover após 3 segundos
-    setTimeout(() => {
-      typing.delete(user.id)
-      broadcastTyping(roomId)
-    }, 3000)
-  } else {
-    typing.delete(user.id)
-  }
-
-  broadcastTyping(roomId)
-}
-
-const handleDisconnect = (ws) => {
-  const user = connectedUsers.get(ws)
-  if (user) {
-    const roomId = userRooms.get(user.id)
-
-    // Atualizar status do usuário
-    const users = loadUsers()
-    const userIndex = users.findIndex((u) => u.id === user.id)
-    if (userIndex > -1) {
-      users[userIndex].status = "offline"
-      users[userIndex].lastSeen = new Date().toISOString()
-      saveUsers(users)
-    }
-
-    // Remover das listas
-    connectedUsers.delete(ws)
-    userRooms.delete(user.id)
-
-    // Remover da lista de digitando
-    if (roomId) {
-      const typing = typingUsers.get(roomId)
-      if (typing && typing.has(user.id)) {
-        typing.delete(user.id)
-        broadcastTyping(roomId)
-      }
-      broadcastUserList(roomId)
-    }
-  }
 }
 
 // Conexão WebSocket
-wss.on("connection", (ws) => {
-  console.log("🔗 Cliente conectado")
+wss.on("connection", (ws, req) => {
+  console.log("🔌 Nova conexão WebSocket")
+  systemStats.totalConnections++
 
-  ws.on("error", (error) => {
-    console.error("❌ Erro WebSocket:", error)
-  })
+  // Dados do cliente
+  const clientData = {
+    id: generateId(),
+    ip: req.socket.remoteAddress,
+    userAgent: req.headers["user-agent"],
+    connectedAt: new Date().toISOString(),
+    isAuthenticated: false,
+    isAdmin: false,
+    user: null,
+  }
 
-  ws.on("message", (data) => {
+  connectedClients.set(ws, clientData)
+
+  // Enviar status de conexão
+  ws.send(
+    JSON.stringify({
+      type: "connected",
+      clientId: clientData.id,
+    }),
+  )
+
+  // Manipular mensagens
+  ws.on("message", async (data) => {
     try {
-      const message = JSON.parse(data.toString())
-      console.log("📩 Mensagem recebida:", message.type)
+      const message = JSON.parse(data)
 
-      switch (message.type) {
-        case "auth":
-          handleAuth(ws, message)
-          break
-        case "login":
-          handleLogin(ws, message)
-          break
-        case "register":
-          handleRegister(ws, message)
-          break
-        case "message":
-          handleMessage(ws, message)
-          break
-        case "deleteMessage":
-          handleDeleteMessage(ws, message)
-          break
-        case "reaction":
-          handleReaction(ws, message)
-          break
-        case "updateProfile":
-          handleUpdateProfile(ws, message)
-          break
-        case "joinRoom":
-          handleJoinRoom(ws, message)
-          break
-        case "typing":
-          handleTyping(ws, message)
-          break
-        case "disconnect":
-          handleDisconnect(ws)
-          break
-        default:
-          console.log("❓ Tipo de mensagem desconhecido:", message.type)
+      // Autenticação master password
+      if (message.type === "auth") {
+        if (validateMasterPassword(message.masterPassword)) {
+          clientData.isAuthenticated = true
+          ws.send(
+            JSON.stringify({
+              type: "authSuccess",
+              message: "Autenticado com sucesso",
+            }),
+          )
+        } else {
+          ws.send(
+            JSON.stringify({
+              type: "authError",
+              message: "Senha master incorreta",
+            }),
+          )
+        }
+        return
+      }
+
+      // Verificar autenticação
+      if (!clientData.isAuthenticated) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Não autenticado",
+          }),
+        )
+        return
+      }
+
+      // Autenticação admin
+      if (message.type === "adminAuth") {
+        if (validateMasterPassword(message.masterPassword)) {
+          clientData.isAdmin = true
+          ws.send(
+            JSON.stringify({
+              type: "adminAuthSuccess",
+              message: "Admin autenticado",
+            }),
+          )
+        } else {
+          ws.send(
+            JSON.stringify({
+              type: "adminAuthError",
+              message: "Senha admin incorreta",
+            }),
+          )
+        }
+        return
+      }
+
+      // Verificar modo manutenção
+      if (systemSettings.maintenanceMode && !clientData.isAdmin) {
+        ws.send(
+          JSON.stringify({
+            type: "maintenanceMode",
+            message: "Sistema em manutenção",
+          }),
+        )
+        return
+      }
+
+      // Login
+      if (message.type === "login") {
+        const { name, email } = message
+
+        if (!name || !email) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Nome e email são obrigatórios",
+            }),
+          )
+          return
+        }
+
+        // Verificar se usuário existe
+        const user = Array.from(users.values()).find((u) => u.email === email)
+
+        if (!user) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Usuário não encontrado. Faça seu cadastro primeiro.",
+            }),
+          )
+          return
+        }
+
+        // Verificar se está banido
+        if (bannedUsers.has(user.id)) {
+          ws.send(
+            JSON.stringify({
+              type: "loginError",
+              message: "Usuário banido do sistema",
+            }),
+          )
+          return
+        }
+
+        // Atualizar status online
+        user.online = true
+        user.lastSeen = new Date().toISOString()
+        clientData.user = user
+
+        ws.send(
+          JSON.stringify({
+            type: "loginSuccess",
+            user: user,
+          }),
+        )
+
+        // Broadcast lista de usuários atualizada
+        broadcastUserList()
+
+        console.log(`✅ Login: ${user.name} (${user.email})`)
+        return
+      }
+
+      // Registro
+      if (message.type === "register") {
+        if (!systemSettings.registrationEnabled) {
+          ws.send(
+            JSON.stringify({
+              type: "registerError",
+              message: "Cadastros estão desabilitados",
+            }),
+          )
+          return
+        }
+
+        const { name, email, password, avatar, color, profileImage } = message
+
+        if (!name || !email || !password) {
+          ws.send(
+            JSON.stringify({
+              type: "registerError",
+              message: "Todos os campos são obrigatórios",
+            }),
+          )
+          return
+        }
+
+        // Verificar se email já existe
+        const existingUser = Array.from(users.values()).find((u) => u.email === email)
+        if (existingUser) {
+          ws.send(
+            JSON.stringify({
+              type: "registerError",
+              message: "Este email já está cadastrado",
+            }),
+          )
+          return
+        }
+
+        // Verificar se nome já existe
+        const existingName = Array.from(users.values()).find((u) => u.name === name)
+        if (existingName) {
+          ws.send(
+            JSON.stringify({
+              type: "registerError",
+              message: "Este nome já está em uso",
+            }),
+          )
+          return
+        }
+
+        // Criar novo usuário
+        const userId = generateId()
+        const newUser = {
+          id: userId,
+          name: name,
+          email: email,
+          password: password, // Em produção, usar hash
+          avatar: avatar || "👤",
+          color: color || "#3a86ff",
+          profileImage: profileImage || null,
+          online: true,
+          joinDate: new Date().toISOString(),
+          lastSeen: new Date().toISOString(),
+          banned: false,
+        }
+
+        users.set(userId, newUser)
+        clientData.user = newUser
+
+        ws.send(
+          JSON.stringify({
+            type: "registerSuccess",
+            user: newUser,
+          }),
+        )
+
+        // Broadcast lista de usuários atualizada
+        broadcastUserList()
+
+        console.log(`✅ Registro: ${newUser.name} (${newUser.email})`)
+        saveDataToJSON()
+        return
+      }
+
+      // Verificar se usuário está logado para outras operações
+      if (!clientData.user && !clientData.isAdmin) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Usuário não logado",
+          }),
+        )
+        return
+      }
+
+      // Obter lista de usuários
+      if (message.type === "getUsers") {
+        const userList = Array.from(users.values())
+          .filter((user) => !bannedUsers.has(user.id))
+          .map((user) => ({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            avatar: user.avatar,
+            color: user.color,
+            profileImage: user.profileImage,
+            online: user.online,
+          }))
+
+        ws.send(
+          JSON.stringify({
+            type: "userList",
+            users: userList,
+          }),
+        )
+        return
+      }
+
+      // Obter mensagens
+      if (message.type === "getMessages") {
+        const messageList = messages.slice(-50) // Últimas 50 mensagens
+        ws.send(
+          JSON.stringify({
+            type: "messageList",
+            messages: messageList,
+          }),
+        )
+        return
+      }
+
+      // Enviar mensagem
+      if (message.type === "message") {
+        const user = clientData.user
+        if (!user) return
+
+        const { content, messageType, replyTo } = message
+
+        if (!content) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Conteúdo da mensagem é obrigatório",
+            }),
+          )
+          return
+        }
+
+        // Verificar tamanho da mensagem
+        if (content.length > systemSettings.maxMessageLength) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: `Mensagem muito longa. Máximo ${systemSettings.maxMessageLength} caracteres.`,
+            }),
+          )
+          return
+        }
+
+        // Verificar palavras banidas
+        if (messageType === "text" && containsBannedWords(content)) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Mensagem contém palavras não permitidas",
+            }),
+          )
+          return
+        }
+
+        // Verificar se imagens estão permitidas
+        if (messageType === "image" && !systemSettings.allowImages) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Envio de imagens está desabilitado",
+            }),
+          )
+          return
+        }
+
+        const newMessage = {
+          id: generateId(),
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          userAvatar: user.avatar,
+          userColor: user.color,
+          userProfileImage: user.profileImage,
+          content: content,
+          type: messageType || "text",
+          timestamp: new Date().toISOString(),
+          replyTo: replyTo || null,
+          reactions: {},
+          reported: false,
+        }
+
+        messages.push(newMessage)
+        systemStats.messagesCount++
+
+        // Broadcast mensagem para todos
+        broadcast({
+          type: "newMessage",
+          message: newMessage,
+        })
+
+        console.log(`💬 Mensagem de ${user.name}: ${messageType === "image" ? "[IMAGEM]" : content.substring(0, 50)}`)
+        saveDataToJSON()
+        return
+      }
+
+      // Reação a mensagem
+      if (message.type === "reaction") {
+        const user = clientData.user
+        if (!user) return
+
+        if (!systemSettings.allowReactions) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Reações estão desabilitadas",
+            }),
+          )
+          return
+        }
+
+        const { messageId, emoji } = message
+        const messageIndex = messages.findIndex((m) => m.id === messageId)
+
+        if (messageIndex === -1) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Mensagem não encontrada",
+            }),
+          )
+          return
+        }
+
+        const targetMessage = messages[messageIndex]
+
+        if (!targetMessage.reactions) {
+          targetMessage.reactions = {}
+        }
+
+        if (!targetMessage.reactions[emoji]) {
+          targetMessage.reactions[emoji] = []
+        }
+
+        const userIndex = targetMessage.reactions[emoji].indexOf(user.id)
+
+        if (userIndex === -1) {
+          // Adicionar reação
+          targetMessage.reactions[emoji].push(user.id)
+        } else {
+          // Remover reação
+          targetMessage.reactions[emoji].splice(userIndex, 1)
+
+          // Remover emoji se não há mais reações
+          if (targetMessage.reactions[emoji].length === 0) {
+            delete targetMessage.reactions[emoji]
+          }
+        }
+
+        // Broadcast reação atualizada
+        broadcast({
+          type: "messageReaction",
+          messageId: messageId,
+          reactions: targetMessage.reactions,
+        })
+
+        saveDataToJSON()
+        return
+      }
+
+      // Deletar mensagem
+      if (message.type === "deleteMessage") {
+        const user = clientData.user
+        const { messageId, deleteType } = message
+
+        const messageIndex = messages.findIndex((m) => m.id === messageId)
+        if (messageIndex === -1) return
+
+        const targetMessage = messages[messageIndex]
+
+        // Verificar se é o autor da mensagem ou admin
+        if (targetMessage.userId !== user.id && !clientData.isAdmin) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Sem permissão para deletar esta mensagem",
+            }),
+          )
+          return
+        }
+
+        if (deleteType === "forEveryone") {
+          messages.splice(messageIndex, 1)
+          broadcast({
+            type: "messageDeleted",
+            messageId: messageId,
+            deleteType: "forEveryone",
+          })
+        } else {
+          // Para deleteType 'forMe', apenas enviar confirmação
+          ws.send(
+            JSON.stringify({
+              type: "messageDeleted",
+              messageId: messageId,
+              deleteType: "forMe",
+            }),
+          )
+        }
+
+        saveDataToJSON()
+        return
+      }
+
+      // Atualizar perfil
+      if (message.type === "updateProfile") {
+        const user = clientData.user
+        const updatedUser = message.user
+
+        if (user.id !== updatedUser.id) return
+
+        // Verificar se nome já existe (exceto o próprio usuário)
+        const existingName = Array.from(users.values()).find((u) => u.name === updatedUser.name && u.id !== user.id)
+
+        if (existingName) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Este nome já está em uso",
+            }),
+          )
+          return
+        }
+
+        // Atualizar dados do usuário
+        const userToUpdate = users.get(user.id)
+        userToUpdate.name = updatedUser.name
+        userToUpdate.avatar = updatedUser.avatar
+        userToUpdate.color = updatedUser.color
+        userToUpdate.profileImage = updatedUser.profileImage
+
+        clientData.user = userToUpdate
+
+        // Broadcast lista de usuários atualizada
+        broadcastUserList()
+
+        console.log(`✏️ Perfil atualizado: ${userToUpdate.name}`)
+        saveDataToJSON()
+        return
+      }
+
+      // Denunciar usuário
+      if (message.type === "reportUser") {
+        const { reportedUserId, reportedUserName } = message
+
+        console.log(`🚩 Usuário ${reportedUserName} foi denunciado por ${clientData.user.name}`)
+
+        // Notificar admins
+        broadcastToAdmins({
+          type: "userReported",
+          reportedUserId: reportedUserId,
+          reportedUserName: reportedUserName,
+          reportedBy: clientData.user.name,
+          timestamp: new Date().toISOString(),
+        })
+
+        return
+      }
+
+      // ===== COMANDOS ADMIN =====
+      if (clientData.isAdmin) {
+        // Banir usuário
+        if (message.type === "banUser") {
+          const { userId } = message
+          const user = users.get(userId)
+
+          if (user) {
+            bannedUsers.add(userId)
+            user.banned = true
+            user.online = false
+
+            // Desconectar usuário banido
+            connectedClients.forEach((clientData, client) => {
+              if (clientData.user && clientData.user.id === userId) {
+                client.send(
+                  JSON.stringify({
+                    type: "banned",
+                    message: "Você foi banido do sistema",
+                  }),
+                )
+                client.close()
+              }
+            })
+
+            broadcast({
+              type: "userBanned",
+              userId: userId,
+            })
+
+            console.log(`🚫 Usuário banido: ${user.name}`)
+            saveDataToJSON()
+          }
+          return
+        }
+
+        // Desbanir usuário
+        if (message.type === "unbanUser") {
+          const { userId } = message
+          const user = users.get(userId)
+
+          if (user) {
+            bannedUsers.delete(userId)
+            user.banned = false
+
+            broadcast({
+              type: "userUnbanned",
+              userId: userId,
+            })
+
+            console.log(`✅ Usuário desbanido: ${user.name}`)
+            saveDataToJSON()
+          }
+          return
+        }
+
+        // Deletar usuário
+        if (message.type === "deleteUser") {
+          const { userId } = message
+          const user = users.get(userId)
+
+          if (user) {
+            // Remover todas as mensagens do usuário
+            messages = messages.filter((m) => m.userId !== userId)
+
+            // Remover usuário
+            users.delete(userId)
+            bannedUsers.delete(userId)
+
+            // Desconectar usuário
+            connectedClients.forEach((clientData, client) => {
+              if (clientData.user && clientData.user.id === userId) {
+                client.send(
+                  JSON.stringify({
+                    type: "accountDeleted",
+                    message: "Sua conta foi deletada",
+                  }),
+                )
+                client.close()
+              }
+            })
+
+            broadcastUserList()
+
+            console.log(`🗑️ Usuário deletado: ${user.name}`)
+            saveDataToJSON()
+          }
+          return
+        }
+
+        // Limpar todas as mensagens
+        if (message.type === "clearAllMessages") {
+          messages = []
+
+          broadcast({
+            type: "allMessagesCleared",
+          })
+
+          console.log("🗑️ Todas as mensagens foram deletadas")
+          saveDataToJSON()
+          return
+        }
+
+        // Atualizar configurações
+        if (message.type === "updateSettings") {
+          const { settings } = message
+          systemSettings = { ...systemSettings, ...settings }
+
+          // Processar palavras banidas
+          if (settings.bannedWords) {
+            systemSettings.bannedWords = settings.bannedWords
+              .split(",")
+              .map((word) => word.trim())
+              .filter((word) => word.length > 0)
+          }
+
+          console.log("⚙️ Configurações atualizadas")
+          saveDataToJSON()
+          return
+        }
+
+        // Reiniciar servidor
+        if (message.type === "restartServer") {
+          console.log("🔄 Reiniciando servidor...")
+          saveDataToJSON()
+
+          broadcast({
+            type: "serverRestarting",
+            message: "Servidor reiniciando em 5 segundos...",
+          })
+
+          setTimeout(() => {
+            process.exit(0)
+          }, 5000)
+          return
+        }
+
+        // Obter estatísticas do sistema
+        if (message.type === "getSystemStats") {
+          ws.send(
+            JSON.stringify({
+              type: "systemStats",
+              stats: {
+                uptime: Date.now() - systemStats.serverStartTime,
+                totalUsers: users.size,
+                onlineUsers: connectedClients.size,
+                totalMessages: messages.length,
+                bannedUsers: bannedUsers.size,
+                connections: systemStats.totalConnections,
+                memory: process.memoryUsage(),
+                lastRestart: new Date(systemStats.serverStartTime).toISOString(),
+              },
+            }),
+          )
+          return
+        }
       }
     } catch (error) {
-      console.error("💥 Erro ao processar mensagem:", error)
+      console.error("❌ Erro ao processar mensagem:", error)
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          message: "Erro interno do servidor",
+        }),
+      )
     }
   })
 
+  // Desconexão
   ws.on("close", () => {
-    handleDisconnect(ws)
     console.log("🔌 Cliente desconectado")
-  })
-})
 
-// Limpeza automática de mensagens antigas (opcional)
-setInterval(
-  () => {
-    const messages = loadMessages()
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-
-    const filteredMessages = messages.filter((m) => new Date(m.timestamp) > oneWeekAgo)
-
-    if (filteredMessages.length !== messages.length) {
-      saveMessages(filteredMessages)
-      console.log(`🧹 Limpeza automática: ${messages.length - filteredMessages.length} mensagens antigas removidas`)
-    }
-  },
-  24 * 60 * 60 * 1000,
-) // Executar diariamente
-
-// Limpeza de sessões expiradas
-setInterval(
-  () => {
-    const sessions = loadSessions()
-    const now = new Date()
-    let changed = false
-
-    Object.keys(sessions).forEach((sessionId) => {
-      if (new Date(sessions[sessionId].expiresAt) < now) {
-        delete sessions[sessionId]
-        changed = true
+    const clientData = connectedClients.get(ws)
+    if (clientData && clientData.user) {
+      const user = users.get(clientData.user.id)
+      if (user) {
+        user.online = false
+        user.lastSeen = new Date().toISOString()
       }
-    })
 
-    if (changed) {
-      saveSessions(sessions)
-      console.log("🧹 Sessões expiradas removidas")
+      // Broadcast lista de usuários atualizada
+      setTimeout(() => {
+        broadcastUserList()
+      }, 1000)
     }
-  },
-  6 * 60 * 60 * 1000,
-) // Executar a cada 6 horas
 
-// Iniciar o servidor
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🦍 GORILA CHAT Backend rodando na porta ${PORT}`)
-  console.log(`📁 Dados salvos em: ${DATA_DIR}`)
-  console.log(`🌐 Health check disponível em: /health`)
-})
+    connectedClients.delete(ws)
+  })
 
-// Adicionar tratamento de erros
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error)
-})
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason)
-})
-
-// Graceful shutdown
-process.on("SIGTERM", () => {
-  console.log("SIGTERM received, shutting down gracefully")
-  server.close(() => {
-    console.log("Server closed")
-    process.exit(0)
+  // Erro na conexão
+  ws.on("error", (error) => {
+    console.error("❌ Erro WebSocket:", error)
+    connectedClients.delete(ws)
   })
 })
+
+// Função para broadcast da lista de usuários
+function broadcastUserList() {
+  cleanupOfflineUsers()
+
+  const userList = Array.from(users.values())
+    .filter((user) => !bannedUsers.has(user.id))
+    .map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      color: user.color,
+      profileImage: user.profileImage,
+      online: user.online,
+    }))
+
+  broadcast({
+    type: "userList",
+    users: userList,
+  })
+
+  // Enviar lista completa para admins
+  const adminUserList = Array.from(users.values()).map((user) => ({
+    ...user,
+    banned: bannedUsers.has(user.id),
+  }))
+
+  broadcastToAdmins({
+    type: "adminUserList",
+    users: adminUserList,
+  })
+}
+
+// Salvar dados periodicamente
+setInterval(
+  () => {
+    saveDataToJSON()
+  },
+  5 * 60 * 1000,
+) // A cada 5 minutos
+
+// Limpar usuários offline periodicamente
+setInterval(() => {
+  cleanupOfflineUsers()
+  broadcastUserList()
+}, 30 * 1000) // A cada 30 segundos
+
+// Manipular encerramento do processo
+process.on("SIGINT", () => {
+  console.log("\n🛑 Encerrando servidor...")
+  saveDataToJSON()
+  process.exit(0)
+})
+
+process.on("SIGTERM", () => {
+  console.log("\n🛑 Encerrando servidor...")
+  saveDataToJSON()
+  process.exit(0)
+})
+
+// Carregar dados ao iniciar
+loadDataFromJSON()
+
+// Iniciar servidor
+server.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`)
+  console.log(`🌐 WebSocket disponível em ws://localhost:${PORT}`)
+  console.log(`📊 Usuários carregados: ${users.size}`)
+  console.log(`💬 Mensagens carregadas: ${messages.length}`)
+  console.log(`🔐 Senha master: ${MASTER_PASSWORD}`)
+})
+
+// Exportar para uso em outros módulos (se necessário)
+module.exports = {
+  server,
+  wss,
+  users,
+  messages,
+  systemSettings,
+}
