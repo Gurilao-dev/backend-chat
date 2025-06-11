@@ -74,7 +74,7 @@ const memoryStore = {
 }
 
 // Senhas de acesso - ATUALIZADO CONFORME SOLICITADO
-const ACCESS_PASSWORD = "ChatGorila" // Alterado de "gorilachatv2" para "ChatGorila"
+const ACCESS_PASSWORD = "gorilachat" // Alterado de "gorilachatv2" para "ChatGorila"
 const ADMIN_PASSWORD = "admin123"
 
 // Configurações do sistema
