@@ -11,26 +11,47 @@ const fs = require("fs")
 dotenv.config()
 
 // Inicializar Firebase Admin
-const serviceAccount = require("../firebase-service-account.json")
+try {
+  const serviceAccount = require("../firebase-service-account.json")
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com/`,
-  storageBucket: `${serviceAccount.project_id}.appspot.com`,
-})
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com/`,
+    storageBucket: `${serviceAccount.project_id}.appspot.com`,
+  })
+} catch (error) {
+  console.warn("Firebase não configurado. Usando armazenamento em memória:", error.message)
+  // Continuará usando armazenamento em memória
+}
 
-const db = admin.firestore()
-const storage = admin.storage()
+const db = admin.firestore ? admin.firestore() : null
+const storage = admin.storage ? admin.storage() : null
 
 // Configurar Express
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: "50mb" }))
-app.use(express.static("public"))
+app.use(express.static(path.join(__dirname, "../frontend")))
 
 // Configurar Multer para upload de arquivos
+const uploadDir = path.join(__dirname, "../uploads")
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true })
+}
+
+const storage_local = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir)
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9)
+    const ext = path.extname(file.originalname)
+    cb(null, uniqueSuffix + ext)
+  },
+})
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: storage || storage_local,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
   },
@@ -44,8 +65,16 @@ const connectedUsers = new Map()
 const userSessions = new Map()
 const adminSessions = new Map()
 
-// Senhas de acesso
-const ACCESS_PASSWORD = "gorilachatv2"
+// Armazenamento em memória para dados (caso Firebase não esteja disponível)
+const memoryStore = {
+  users: new Map(),
+  messages: [],
+  groups: new Map(),
+  reports: [],
+}
+
+// Senhas de acesso - ATUALIZADO CONFORME SOLICITADO
+const ACCESS_PASSWORD = "ChatGorila" // Alterado de "gorilachatv2" para "ChatGorila"
 const ADMIN_PASSWORD = "admin123"
 
 // Configurações do sistema
@@ -59,6 +88,8 @@ let systemSettings = {
 
 // Carregar configurações do Firebase
 async function loadSystemSettings() {
+  if (!db) return
+
   try {
     const settingsDoc = await db.collection("system").doc("settings").get()
     if (settingsDoc.exists) {
@@ -71,6 +102,8 @@ async function loadSystemSettings() {
 
 // Salvar configurações no Firebase
 async function saveSystemSettings() {
+  if (!db) return
+
   try {
     await db.collection("system").doc("settings").set(systemSettings)
   } catch (error) {
@@ -81,6 +114,25 @@ async function saveSystemSettings() {
 // Carregar configurações iniciais
 loadSystemSettings()
 
+// Inicializar grupo padrão
+const defaultGroup = {
+  id: "general",
+  name: "GorilaChat Wuaze",
+  description: "Grupo Geral Gorila Wuaze",
+  avatar: "🦍",
+  color: "#9ACD32",
+  createdBy: "system",
+  admins: ["system"],
+  members: [],
+  createdAt: new Date().toISOString(),
+  settings: {
+    onlyAdminsCanMessage: false,
+    onlyAdminsCanAddMembers: false,
+  },
+}
+
+memoryStore.groups.set("general", defaultGroup)
+
 // Rotas Express
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
@@ -88,19 +140,27 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Nenhum arquivo enviado" })
     }
 
-    const fileName = `${uuidv4()}_${req.file.originalname}`
-    const file = storage.bucket().file(`uploads/${fileName}`)
+    let publicUrl = ""
 
-    await file.save(req.file.buffer, {
-      metadata: {
-        contentType: req.file.mimetype,
-      },
-    })
+    if (storage) {
+      // Upload para Firebase Storage
+      const fileName = `${uuidv4()}_${req.file.originalname}`
+      const file = storage.bucket().file(`uploads/${fileName}`)
 
-    // Tornar o arquivo público
-    await file.makePublic()
+      await file.save(req.file.buffer, {
+        metadata: {
+          contentType: req.file.mimetype,
+        },
+      })
 
-    const publicUrl = `https://storage.googleapis.com/${storage.bucket().name}/uploads/${fileName}`
+      // Tornar o arquivo público
+      await file.makePublic()
+
+      publicUrl = `https://storage.googleapis.com/${storage.bucket().name}/uploads/${fileName}`
+    } else {
+      // Upload para armazenamento local
+      publicUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`
+    }
 
     res.json({ url: publicUrl })
   } catch (error) {
@@ -111,6 +171,11 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", maintenance: systemSettings.maintenanceMode })
+})
+
+// Servir arquivos estáticos
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/index.html"))
 })
 
 // Iniciar servidor Express
@@ -211,6 +276,9 @@ async function handleMessage(ws, message) {
     case "markAsRead":
       await handleMarkAsRead(ws, message)
       break
+    case "searchMessages":
+      await handleSearchMessages(ws, message)
+      break
     // Admin handlers
     case "adminGetUsers":
       await handleAdminGetUsers(ws)
@@ -244,6 +312,7 @@ async function handleAuth(ws, message) {
     return
   }
 
+  // Verificar senha de acesso - ATUALIZADO PARA "ChatGorila"
   if (message.password === systemSettings.accessPassword || message.masterPassword === "sitedogorilão") {
     ws.send(
       JSON.stringify({
@@ -287,11 +356,28 @@ async function handleAdminAuth(ws, message) {
 
 async function handleLogin(ws, message) {
   try {
-    // Buscar usuário no Firebase
-    const usersRef = db.collection("users")
-    const snapshot = await usersRef.where("email", "==", message.email).get()
+    let userData = null
 
-    if (snapshot.empty) {
+    if (db) {
+      // Buscar usuário no Firebase
+      const usersRef = db.collection("users")
+      const snapshot = await usersRef.where("email", "==", message.email).get()
+
+      if (!snapshot.empty) {
+        const userDoc = snapshot.docs[0]
+        userData = { ...userDoc.data(), userId: userDoc.id }
+      }
+    } else {
+      // Buscar usuário na memória
+      for (const [userId, user] of memoryStore.users.entries()) {
+        if (user.email === message.email) {
+          userData = { ...user, userId }
+          break
+        }
+      }
+    }
+
+    if (!userData) {
       ws.send(
         JSON.stringify({
           type: "loginError",
@@ -300,9 +386,6 @@ async function handleLogin(ws, message) {
       )
       return
     }
-
-    const userDoc = snapshot.docs[0]
-    const userData = userDoc.data()
 
     // Verificar se está banido
     if (userData.banned) {
@@ -327,28 +410,35 @@ async function handleLogin(ws, message) {
     }
 
     // Atualizar status online
-    await userDoc.ref.update({
-      isOnline: true,
-      lastSeen: admin.firestore.FieldValue.serverTimestamp(),
-    })
+    userData.isOnline = true
+    userData.lastSeen = new Date().toISOString()
+
+    if (db) {
+      await db.collection("users").doc(userData.userId).update({
+        isOnline: true,
+        lastSeen: admin.firestore.FieldValue.serverTimestamp(),
+      })
+    } else {
+      memoryStore.users.set(userData.userId, userData)
+    }
 
     // Criar sessão
     const sessionToken = uuidv4()
     const userSession = {
-      userId: userDoc.id,
+      userId: userData.userId,
       email: userData.email,
       ws: ws,
     }
 
     userSessions.set(sessionToken, userSession)
-    connectedUsers.set(userDoc.id, { ...userData, ws: ws, userId: userDoc.id })
+    connectedUsers.set(userData.userId, { ...userData, ws: ws })
 
     ws.send(
       JSON.stringify({
         type: "loginSuccess",
         sessionToken: sessionToken,
         user: {
-          userId: userDoc.id,
+          userId: userData.userId,
           name: userData.name,
           email: userData.email,
           avatar: userData.avatar,
@@ -362,7 +452,7 @@ async function handleLogin(ws, message) {
     )
 
     // Notificar outros usuários
-    await broadcastUserStatus(userDoc.id, true)
+    await broadcastUserStatus(userData.userId, true)
   } catch (error) {
     console.error("Erro no login:", error)
     ws.send(
@@ -376,11 +466,24 @@ async function handleLogin(ws, message) {
 
 async function handleRegister(ws, message) {
   try {
-    // Verificar se email já existe
-    const usersRef = db.collection("users")
-    const emailCheck = await usersRef.where("email", "==", message.email).get()
+    let emailExists = false
 
-    if (!emailCheck.empty) {
+    if (db) {
+      // Verificar se email já existe no Firebase
+      const usersRef = db.collection("users")
+      const emailCheck = await usersRef.where("email", "==", message.email).get()
+      emailExists = !emailCheck.empty
+    } else {
+      // Verificar se email já existe na memória
+      for (const user of memoryStore.users.values()) {
+        if (user.email === message.email) {
+          emailExists = true
+          break
+        }
+      }
+    }
+
+    if (emailExists) {
       ws.send(
         JSON.stringify({
           type: "registerError",
@@ -393,30 +496,45 @@ async function handleRegister(ws, message) {
     // Gerar número único
     const userNumber = await generateUniqueNumber()
 
-    // Criar usuário no Firebase
+    // Criar usuário
+    const userId = uuidv4()
     const userData = {
+      userId: userId,
       name: message.name,
       email: message.email,
       password: message.password,
       avatar: message.avatar || "👤",
-      color: message.color || "#3a86ff",
+      color: message.color || "#9ACD32",
       profileImage: message.profileImage || null,
       userNumber: userNumber,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: new Date().toISOString(),
       isOnline: true,
-      lastSeen: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeen: new Date().toISOString(),
       contacts: [],
       blocked: [],
       settings: {
         hideLastSeen: false,
         hideOnlineStatus: false,
         chatBackground: null,
+        requireContactApproval: false,
       },
       banned: false,
     }
 
-    const userRef = await usersRef.add(userData)
-    const userId = userRef.id
+    if (db) {
+      // Salvar no Firebase
+      await db.collection("users").doc(userId).set(userData)
+    } else {
+      // Salvar na memória
+      memoryStore.users.set(userId, userData)
+    }
+
+    // Adicionar ao grupo padrão
+    if (memoryStore.groups.has("general")) {
+      const generalGroup = memoryStore.groups.get("general")
+      generalGroup.members.push(userId)
+      memoryStore.groups.set("general", generalGroup)
+    }
 
     // Criar sessão
     const sessionToken = uuidv4()
@@ -426,7 +544,7 @@ async function handleRegister(ws, message) {
       ws: ws,
     })
 
-    connectedUsers.set(userId, { ...userData, ws: ws, userId: userId })
+    connectedUsers.set(userId, { ...userData, ws: ws })
 
     ws.send(
       JSON.stringify({
@@ -441,7 +559,7 @@ async function handleRegister(ws, message) {
           profileImage: userData.profileImage,
           userNumber: userNumber,
           settings: userData.settings,
-          createdAt: new Date().toISOString(),
+          createdAt: userData.createdAt,
         },
       }),
     )
@@ -469,8 +587,9 @@ async function handleChatMessage(ws, message) {
     if (!userData) return
 
     // Criar mensagem
+    const messageId = uuidv4()
     const messageData = {
-      id: uuidv4(),
+      id: messageId,
       userId: userId,
       userName: userData.name,
       userAvatar: userData.avatar,
@@ -480,7 +599,7 @@ async function handleChatMessage(ws, message) {
       type: message.messageType || "text",
       chatId: message.chatId || "general",
       chatType: message.chatType || "group",
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: new Date().toISOString(),
       replyTo: message.replyTo || null,
       reactions: {},
       readBy: [userId],
@@ -488,32 +607,30 @@ async function handleChatMessage(ws, message) {
       deleted: false,
     }
 
-    // Salvar no Firebase
-    await db.collection("messages").add(messageData)
-
-    // Preparar dados para broadcast
-    const broadcastData = {
-      ...messageData,
-      timestamp: new Date().toISOString(),
+    // Salvar mensagem
+    if (db) {
+      await db.collection("messages").add(messageData)
+    } else {
+      memoryStore.messages.push(messageData)
     }
 
     // Broadcast para usuários relevantes
     if (message.chatType === "group") {
       await broadcastToGroup(message.chatId, {
         type: "newMessage",
-        message: broadcastData,
+        message: messageData,
       })
     } else {
       await broadcastToUser(message.recipientId, {
         type: "newMessage",
-        message: broadcastData,
+        message: messageData,
       })
 
       // Enviar de volta para o remetente
       ws.send(
         JSON.stringify({
           type: "newMessage",
-          message: broadcastData,
+          message: messageData,
         }),
       )
     }
@@ -556,8 +673,9 @@ async function handlePrivateMessage(ws, message) {
     // Criar chat privado se não existir
     const chatId = [senderId, message.recipientId].sort().join("_")
 
+    const messageId = uuidv4()
     const messageData = {
-      id: uuidv4(),
+      id: messageId,
       userId: senderId,
       userName: senderData.name,
       userAvatar: senderData.avatar,
@@ -568,7 +686,7 @@ async function handlePrivateMessage(ws, message) {
       chatId: chatId,
       chatType: "private",
       participants: [senderId, message.recipientId],
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: new Date().toISOString(),
       replyTo: message.replyTo || null,
       reactions: {},
       readBy: [senderId],
@@ -576,20 +694,18 @@ async function handlePrivateMessage(ws, message) {
       deleted: false,
     }
 
-    // Salvar no Firebase
-    await db.collection("messages").add(messageData)
-
-    // Preparar dados para envio
-    const broadcastData = {
-      ...messageData,
-      timestamp: new Date().toISOString(),
+    // Salvar mensagem
+    if (db) {
+      await db.collection("messages").add(messageData)
+    } else {
+      memoryStore.messages.push(messageData)
     }
 
     // Enviar para ambos os usuários
     ws.send(
       JSON.stringify({
         type: "newPrivateMessage",
-        message: broadcastData,
+        message: messageData,
       }),
     )
 
@@ -597,7 +713,7 @@ async function handlePrivateMessage(ws, message) {
       recipientData.ws.send(
         JSON.stringify({
           type: "newPrivateMessage",
-          message: broadcastData,
+          message: messageData,
         }),
       )
     }
@@ -611,12 +727,19 @@ async function handleReaction(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const messageRef = db.collection("messages").doc(message.messageId)
-    const messageDoc = await messageRef.get()
+    let messageData = null
 
-    if (!messageDoc.exists) return
+    if (db) {
+      const messageRef = db.collection("messages").doc(message.messageId)
+      const messageDoc = await messageRef.get()
 
-    const messageData = messageDoc.data()
+      if (!messageDoc.exists) return
+      messageData = messageDoc.data()
+    } else {
+      messageData = memoryStore.messages.find((m) => m.id === message.messageId)
+      if (!messageData) return
+    }
+
     const reactions = messageData.reactions || {}
 
     // Atualizar reação
@@ -636,8 +759,15 @@ async function handleReaction(ws, message) {
       reactions[message.emoji].push(userId)
     }
 
-    // Atualizar no Firebase
-    await messageRef.update({ reactions })
+    // Atualizar no armazenamento
+    if (db) {
+      await db.collection("messages").doc(message.messageId).update({ reactions })
+    } else {
+      const index = memoryStore.messages.findIndex((m) => m.id === message.messageId)
+      if (index !== -1) {
+        memoryStore.messages[index].reactions = reactions
+      }
+    }
 
     // Broadcast para usuários relevantes
     const broadcastData = {
@@ -663,12 +793,18 @@ async function handleDeleteMessage(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const messageRef = db.collection("messages").doc(message.messageId)
-    const messageDoc = await messageRef.get()
+    let messageData = null
 
-    if (!messageDoc.exists) return
+    if (db) {
+      const messageRef = db.collection("messages").doc(message.messageId)
+      const messageDoc = await messageRef.get()
 
-    const messageData = messageDoc.data()
+      if (!messageDoc.exists) return
+      messageData = messageDoc.data()
+    } else {
+      messageData = memoryStore.messages.find((m) => m.id === message.messageId)
+      if (!messageData) return
+    }
 
     // Verificar se o usuário pode deletar a mensagem
     if (messageData.userId !== userId) {
@@ -683,11 +819,20 @@ async function handleDeleteMessage(ws, message) {
 
     if (message.deleteType === "forEveryone") {
       // Marcar como deletada para todos
-      await messageRef.update({
-        deleted: true,
-        deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-        content: "Esta mensagem foi apagada",
-      })
+      if (db) {
+        await db.collection("messages").doc(message.messageId).update({
+          deleted: true,
+          deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          content: "Esta mensagem foi apagada",
+        })
+      } else {
+        const index = memoryStore.messages.findIndex((m) => m.id === message.messageId)
+        if (index !== -1) {
+          memoryStore.messages[index].deleted = true
+          memoryStore.messages[index].deletedAt = new Date().toISOString()
+          memoryStore.messages[index].content = "Esta mensagem foi apagada"
+        }
+      }
 
       // Broadcast para todos
       const broadcastData = {
@@ -733,6 +878,7 @@ async function handleTyping(ws, message) {
       userAvatar: userData.avatar,
       chatId: message.chatId,
       chatType: message.chatType,
+      isTyping: message.isTyping,
     }
 
     if (message.chatType === "group") {
@@ -745,25 +891,306 @@ async function handleTyping(ws, message) {
   }
 }
 
-async function handleJoinGroup(ws, message) {
+// Pesquisa de mensagens
+async function handleSearchMessages(ws, message) {
   try {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const groupRef = db.collection("groups").doc(message.groupId)
-    const groupDoc = await groupRef.get()
+    const searchTerm = message.searchTerm.toLowerCase()
+    const chatId = message.chatId
 
-    if (!groupDoc.exists) {
+    let results = []
+
+    if (db) {
+      // Buscar no Firebase
+      const snapshot = await db.collection("messages").where("chatId", "==", chatId).get()
+
+      results = snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((msg) => msg.content.toLowerCase().includes(searchTerm))
+    } else {
+      // Buscar na memória
+      results = memoryStore.messages.filter(
+        (msg) => msg.chatId === chatId && msg.content.toLowerCase().includes(searchTerm),
+      )
+    }
+
+    ws.send(
+      JSON.stringify({
+        type: "searchResults",
+        results: results,
+        searchTerm: searchTerm,
+      }),
+    )
+  } catch (error) {
+    console.error("Erro ao pesquisar mensagens:", error)
+  }
+}
+
+// Contact and user management
+async function handleAddContact(ws, message) {
+  try {
+    const userId = getUserIdFromWebSocket(ws)
+    if (!userId) return
+
+    let contactData = null
+    let contactId = null
+
+    if (db) {
+      // Buscar usuário pelo número no Firebase
+      const usersRef = db.collection("users")
+      const snapshot = await usersRef.where("userNumber", "==", message.userNumber).get()
+
+      if (!snapshot.empty) {
+        const contactDoc = snapshot.docs[0]
+        contactData = contactDoc.data()
+        contactId = contactDoc.id
+      }
+    } else {
+      // Buscar usuário pelo número na memória
+      for (const [id, user] of memoryStore.users.entries()) {
+        if (user.userNumber === message.userNumber) {
+          contactData = user
+          contactId = id
+          break
+        }
+      }
+    }
+
+    if (!contactData) {
       ws.send(
         JSON.stringify({
           type: "error",
-          message: "Grupo não encontrado",
+          message: "Usuário não encontrado com este número",
         }),
       )
       return
     }
 
-    const groupData = groupDoc.data()
+    // Verificar se já é contato
+    let userData = null
+
+    if (db) {
+      const userDoc = await db.collection("users").doc(userId).get()
+      userData = userDoc.data()
+    } else {
+      userData = memoryStore.users.get(userId)
+    }
+
+    if (userData.contacts && userData.contacts.some((c) => c.userId === contactId)) {
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          message: "Este usuário já está na sua lista de contatos",
+        }),
+      )
+      return
+    }
+
+    // Verificar se o contato requer aprovação
+    const requiresApproval = contactData.settings?.requireContactApproval || false
+
+    // Adicionar contato
+    const contact = {
+      userId: contactId,
+      name: message.contactName || contactData.name,
+      avatar: contactData.avatar,
+      color: contactData.color,
+      profileImage: contactData.profileImage,
+      userNumber: contactData.userNumber,
+      addedAt: new Date().toISOString(),
+      status: requiresApproval ? "pending" : "accepted",
+    }
+
+    if (db) {
+      // Atualizar no Firebase
+      await db
+        .collection("users")
+        .doc(userId)
+        .update({
+          contacts: admin.firestore.FieldValue.arrayUnion(contact),
+        })
+    } else {
+      // Atualizar na memória
+      if (!userData.contacts) userData.contacts = []
+      userData.contacts.push(contact)
+      memoryStore.users.set(userId, userData)
+    }
+
+    ws.send(
+      JSON.stringify({
+        type: "contactAdded",
+        contact: contact,
+      }),
+    )
+
+    // Notificar o outro usuário se necessário aprovação
+    if (requiresApproval) {
+      const contactRequest = {
+        type: "contactRequest",
+        from: {
+          userId: userId,
+          name: userData.name,
+          avatar: userData.avatar,
+          color: userData.color,
+          profileImage: userData.profileImage,
+          userNumber: userData.userNumber,
+        },
+        timestamp: new Date().toISOString(),
+      }
+
+      await broadcastToUser(contactId, contactRequest)
+    }
+  } catch (error) {
+    console.error("Erro ao adicionar contato:", error)
+  }
+}
+
+async function handleBlockUser(ws, message) {
+  try {
+    const userId = getUserIdFromWebSocket(ws)
+    if (!userId) return
+
+    if (db) {
+      await db
+        .collection("users")
+        .doc(userId)
+        .update({
+          blocked: admin.firestore.FieldValue.arrayUnion(message.blockedUserId),
+        })
+    } else {
+      const userData = memoryStore.users.get(userId)
+      if (!userData.blocked) userData.blocked = []
+      userData.blocked.push(message.blockedUserId)
+      memoryStore.users.set(userId, userData)
+    }
+
+    ws.send(
+      JSON.stringify({
+        type: "userBlocked",
+        blockedUserId: message.blockedUserId,
+      }),
+    )
+  } catch (error) {
+    console.error("Erro ao bloquear usuário:", error)
+  }
+}
+
+async function handleReportUser(ws, message) {
+  try {
+    const reporterId = getUserIdFromWebSocket(ws)
+    if (!reporterId) return
+
+    const report = {
+      id: uuidv4(),
+      reporterId: reporterId,
+      reporterName: connectedUsers.get(reporterId).name,
+      reportedUserId: message.reportedUserId,
+      reportedUserName: message.reportedUserName,
+      reason: message.reason || "Não especificado",
+      details: message.details || "",
+      timestamp: new Date().toISOString(),
+      status: "pending",
+    }
+
+    if (db) {
+      await db.collection("reports").add(report)
+    } else {
+      memoryStore.reports.push(report)
+    }
+
+    ws.send(
+      JSON.stringify({
+        type: "reportSubmitted",
+        message: "Denúncia enviada com sucesso",
+      }),
+    )
+
+    // Notificar administradores
+    await notifyAdmins({
+      type: "newReport",
+      report: report,
+    })
+  } catch (error) {
+    console.error("Erro ao denunciar usuário:", error)
+  }
+}
+
+// Group management
+async function handleCreateGroup(ws, message) {
+  try {
+    const userId = getUserIdFromWebSocket(ws)
+    if (!userId) return
+
+    const groupId = uuidv4()
+    const groupData = {
+      id: groupId,
+      name: message.name,
+      description: message.description || "",
+      avatar: message.avatar || "👥",
+      color: message.color || "#9ACD32",
+      createdBy: userId,
+      admins: [userId],
+      members: [userId, ...message.members],
+      createdAt: new Date().toISOString(),
+      settings: {
+        onlyAdminsCanMessage: false,
+        onlyAdminsCanAddMembers: false,
+      },
+    }
+
+    if (db) {
+      await db.collection("groups").doc(groupId).set(groupData)
+    } else {
+      memoryStore.groups.set(groupId, groupData)
+    }
+
+    // Notificar membros
+    const broadcastData = {
+      type: "groupCreated",
+      group: groupData,
+    }
+
+    for (const memberId of groupData.members) {
+      await broadcastToUser(memberId, broadcastData)
+    }
+  } catch (error) {
+    console.error("Erro ao criar grupo:", error)
+  }
+}
+
+async function handleJoinGroup(ws, message) {
+  try {
+    const userId = getUserIdFromWebSocket(ws)
+    if (!userId) return
+
+    let groupData = null
+
+    if (db) {
+      const groupDoc = await db.collection("groups").doc(message.groupId).get()
+      if (!groupDoc.exists) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Grupo não encontrado",
+          }),
+        )
+        return
+      }
+      groupData = groupDoc.data()
+    } else {
+      groupData = memoryStore.groups.get(message.groupId)
+      if (!groupData) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Grupo não encontrado",
+          }),
+        )
+        return
+      }
+    }
 
     // Verificar se o usuário já está no grupo
     if (groupData.members.includes(userId)) {
@@ -777,17 +1204,26 @@ async function handleJoinGroup(ws, message) {
     }
 
     // Adicionar usuário ao grupo
-    await groupRef.update({
-      members: admin.firestore.FieldValue.arrayUnion(userId),
-    })
+    if (db) {
+      await db
+        .collection("groups")
+        .doc(message.groupId)
+        .update({
+          members: admin.firestore.FieldValue.arrayUnion(userId),
+        })
+    } else {
+      groupData.members.push(userId)
+      memoryStore.groups.set(message.groupId, groupData)
+    }
 
     // Notificar membros do grupo
+    const userData = connectedUsers.get(userId)
     const broadcastData = {
       type: "userJoinedGroup",
       groupId: message.groupId,
       userId: userId,
-      userName: connectedUsers.get(userId).name,
-      userAvatar: connectedUsers.get(userId).avatar,
+      userName: userData.name,
+      userAvatar: userData.avatar,
     }
 
     for (const memberId of groupData.members) {
@@ -814,20 +1250,32 @@ async function handleLeaveGroup(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const groupRef = db.collection("groups").doc(message.groupId)
-    const groupDoc = await groupRef.get()
+    let groupData = null
 
-    if (!groupDoc.exists) {
-      ws.send(
-        JSON.stringify({
-          type: "error",
-          message: "Grupo não encontrado",
-        }),
-      )
-      return
+    if (db) {
+      const groupDoc = await db.collection("groups").doc(message.groupId).get()
+      if (!groupDoc.exists) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Grupo não encontrado",
+          }),
+        )
+        return
+      }
+      groupData = groupDoc.data()
+    } else {
+      groupData = memoryStore.groups.get(message.groupId)
+      if (!groupData) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Grupo não encontrado",
+          }),
+        )
+        return
+      }
     }
-
-    const groupData = groupDoc.data()
 
     // Verificar se o usuário está no grupo
     if (!groupData.members.includes(userId)) {
@@ -841,17 +1289,26 @@ async function handleLeaveGroup(ws, message) {
     }
 
     // Remover usuário do grupo
-    await groupRef.update({
-      members: admin.firestore.FieldValue.arrayRemove(userId),
-    })
+    if (db) {
+      await db
+        .collection("groups")
+        .doc(message.groupId)
+        .update({
+          members: admin.firestore.FieldValue.arrayRemove(userId),
+        })
+    } else {
+      groupData.members = groupData.members.filter((id) => id !== userId)
+      memoryStore.groups.set(message.groupId, groupData)
+    }
 
     // Notificar membros do grupo
+    const userData = connectedUsers.get(userId)
     const broadcastData = {
       type: "userLeftGroup",
       groupId: message.groupId,
       userId: userId,
-      userName: connectedUsers.get(userId).name,
-      userAvatar: connectedUsers.get(userId).avatar,
+      userName: userData.name,
+      userAvatar: userData.avatar,
     }
 
     for (const memberId of groupData.members) {
@@ -874,15 +1331,19 @@ async function handleMarkAsRead(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const messageRef = db.collection("messages").doc(message.messageId)
-    const messageDoc = await messageRef.get()
+    let messageData = null
 
-    if (!messageDoc.exists) return
-
-    const messageData = messageDoc.data()
+    if (db) {
+      const messageDoc = await db.collection("messages").doc(message.messageId).get()
+      if (!messageDoc.exists) return
+      messageData = messageDoc.data()
+    } else {
+      messageData = memoryStore.messages.find((m) => m.id === message.messageId)
+      if (!messageData) return
+    }
 
     // Verificar se o usuário pode marcar como lido
-    if (!messageData.participants.includes(userId)) {
+    if (messageData.chatType === "private" && !messageData.participants.includes(userId)) {
       ws.send(
         JSON.stringify({
           type: "error",
@@ -893,9 +1354,22 @@ async function handleMarkAsRead(ws, message) {
     }
 
     // Marcar como lido
-    await messageRef.update({
-      readBy: admin.firestore.FieldValue.arrayUnion(userId),
-    })
+    if (db) {
+      await db
+        .collection("messages")
+        .doc(message.messageId)
+        .update({
+          readBy: admin.firestore.FieldValue.arrayUnion(userId),
+        })
+    } else {
+      const index = memoryStore.messages.findIndex((m) => m.id === message.messageId)
+      if (index !== -1) {
+        if (!memoryStore.messages[index].readBy) memoryStore.messages[index].readBy = []
+        if (!memoryStore.messages[index].readBy.includes(userId)) {
+          memoryStore.messages[index].readBy.push(userId)
+        }
+      }
+    }
 
     ws.send(
       JSON.stringify({
@@ -908,182 +1382,12 @@ async function handleMarkAsRead(ws, message) {
   }
 }
 
-// Contact and user management
-async function handleAddContact(ws, message) {
-  try {
-    const userId = getUserIdFromWebSocket(ws)
-    if (!userId) return
-
-    // Buscar usuário pelo número
-    const usersRef = db.collection("users")
-    const snapshot = await usersRef.where("userNumber", "==", message.userNumber).get()
-
-    if (snapshot.empty) {
-      ws.send(
-        JSON.stringify({
-          type: "error",
-          message: "Usuário não encontrado com este número",
-        }),
-      )
-      return
-    }
-
-    const contactDoc = snapshot.docs[0]
-    const contactData = contactDoc.data()
-    const contactId = contactDoc.id
-
-    // Verificar se já é contato
-    const userRef = db.collection("users").doc(userId)
-    const userDoc = await userRef.get()
-    const userData = userDoc.data()
-
-    if (userData.contacts && userData.contacts.some((c) => c.userId === contactId)) {
-      ws.send(
-        JSON.stringify({
-          type: "error",
-          message: "Este usuário já está na sua lista de contatos",
-        }),
-      )
-      return
-    }
-
-    // Adicionar contato
-    const contact = {
-      userId: contactId,
-      name: contactData.name,
-      avatar: contactData.avatar,
-      color: contactData.color,
-      profileImage: contactData.profileImage,
-      userNumber: contactData.userNumber,
-      addedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }
-
-    await userRef.update({
-      contacts: admin.firestore.FieldValue.arrayUnion(contact),
-    })
-
-    ws.send(
-      JSON.stringify({
-        type: "contactAdded",
-        contact: {
-          ...contact,
-          addedAt: new Date().toISOString(),
-        },
-      }),
-    )
-  } catch (error) {
-    console.error("Erro ao adicionar contato:", error)
-  }
-}
-
-async function handleBlockUser(ws, message) {
-  try {
-    const userId = getUserIdFromWebSocket(ws)
-    if (!userId) return
-
-    const userRef = db.collection("users").doc(userId)
-    await userRef.update({
-      blocked: admin.firestore.FieldValue.arrayUnion(message.blockedUserId),
-    })
-
-    ws.send(
-      JSON.stringify({
-        type: "userBlocked",
-        blockedUserId: message.blockedUserId,
-      }),
-    )
-  } catch (error) {
-    console.error("Erro ao bloquear usuário:", error)
-  }
-}
-
-async function handleReportUser(ws, message) {
-  try {
-    const reporterId = getUserIdFromWebSocket(ws)
-    if (!reporterId) return
-
-    const report = {
-      id: uuidv4(),
-      reporterId: reporterId,
-      reporterName: connectedUsers.get(reporterId).name,
-      reportedUserId: message.reportedUserId,
-      reportedUserName: message.reportedUserName,
-      reason: message.reason || "Não especificado",
-      details: message.details || "",
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      status: "pending",
-    }
-
-    await db.collection("reports").add(report)
-
-    ws.send(
-      JSON.stringify({
-        type: "reportSubmitted",
-        message: "Denúncia enviada com sucesso",
-      }),
-    )
-
-    // Notificar administradores
-    await notifyAdmins({
-      type: "newReport",
-      report: {
-        ...report,
-        timestamp: new Date().toISOString(),
-      },
-    })
-  } catch (error) {
-    console.error("Erro ao denunciar usuário:", error)
-  }
-}
-
-// Group management
-async function handleCreateGroup(ws, message) {
-  try {
-    const userId = getUserIdFromWebSocket(ws)
-    if (!userId) return
-
-    const groupData = {
-      id: uuidv4(),
-      name: message.name,
-      description: message.description || "",
-      avatar: message.avatar || "👥",
-      color: message.color || "#3a86ff",
-      createdBy: userId,
-      admins: [userId],
-      members: [userId, ...message.members],
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      settings: {
-        onlyAdminsCanMessage: false,
-        onlyAdminsCanAddMembers: false,
-      },
-    }
-
-    await db.collection("groups").doc(groupData.id).set(groupData)
-
-    // Notificar membros
-    const broadcastData = {
-      type: "groupCreated",
-      group: {
-        ...groupData,
-        createdAt: new Date().toISOString(),
-      },
-    }
-
-    for (const memberId of groupData.members) {
-      await broadcastToUser(memberId, broadcastData)
-    }
-  } catch (error) {
-    console.error("Erro ao criar grupo:", error)
-  }
-}
-
 // Settings and profile
 async function handleUpdateProfile(ws, message) {
   try {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const userRef = db.collection("users").doc(userId)
     const updates = {}
 
     if (message.user.name) updates.name = message.user.name
@@ -1091,7 +1395,13 @@ async function handleUpdateProfile(ws, message) {
     if (message.user.color) updates.color = message.user.color
     if (message.user.profileImage !== undefined) updates.profileImage = message.user.profileImage
 
-    await userRef.update(updates)
+    if (db) {
+      await db.collection("users").doc(userId).update(updates)
+    } else {
+      const userData = memoryStore.users.get(userId)
+      Object.assign(userData, updates)
+      memoryStore.users.set(userId, userData)
+    }
 
     // Atualizar dados em memória
     const userData = connectedUsers.get(userId)
@@ -1122,10 +1432,15 @@ async function handleUpdateSettings(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const userRef = db.collection("users").doc(userId)
-    await userRef.update({
-      settings: message.settings,
-    })
+    if (db) {
+      await db.collection("users").doc(userId).update({
+        settings: message.settings,
+      })
+    } else {
+      const userData = memoryStore.users.get(userId)
+      userData.settings = message.settings
+      memoryStore.users.set(userId, userData)
+    }
 
     ws.send(
       JSON.stringify({
@@ -1144,8 +1459,14 @@ async function handleGetContacts(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const userDoc = await db.collection("users").doc(userId).get()
-    const userData = userDoc.data()
+    let userData = null
+
+    if (db) {
+      const userDoc = await db.collection("users").doc(userId).get()
+      userData = userDoc.data()
+    } else {
+      userData = memoryStore.users.get(userId)
+    }
 
     ws.send(
       JSON.stringify({
@@ -1166,19 +1487,27 @@ async function handleGetMessages(ws, message) {
     const chatId = message.chatId || "general"
     const limit = message.limit || 50
 
-    const query = db.collection("messages").where("chatId", "==", chatId).orderBy("timestamp", "desc").limit(limit)
+    let messages = []
 
-    const snapshot = await query.get()
-    const messages = []
+    if (db) {
+      const query = db.collection("messages").where("chatId", "==", chatId).orderBy("timestamp", "desc").limit(limit)
 
-    snapshot.forEach((doc) => {
-      const data = doc.data()
-      messages.push({
-        id: doc.id,
-        ...data,
-        timestamp: data.timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
+      const snapshot = await query.get()
+
+      snapshot.forEach((doc) => {
+        const data = doc.data()
+        messages.push({
+          id: doc.id,
+          ...data,
+          timestamp: data.timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
+        })
       })
-    })
+    } else {
+      messages = memoryStore.messages
+        .filter((m) => m.chatId === chatId)
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, limit)
+    }
 
     ws.send(
       JSON.stringify({
@@ -1197,14 +1526,38 @@ async function handleGetUsers(ws, message) {
     const userId = getUserIdFromWebSocket(ws)
     if (!userId) return
 
-    const users = Array.from(connectedUsers.values())
-      .filter((user) => {
-        return !isUserBlockedSync(user.userId, userId) && !isUserBlockedSync(userId, user.userId)
+    let users = []
+
+    if (db) {
+      const snapshot = await db.collection("users").get()
+      users = snapshot.docs.map((doc) => {
+        const data = doc.data()
+        return {
+          userId: doc.id,
+          name: data.name,
+          avatar: data.avatar,
+          color: data.color,
+          profileImage: data.profileImage,
+          userNumber: data.userNumber,
+          isOnline: data.isOnline || false,
+        }
       })
-      .map((user) => {
-        const { ws, password, blocked, ...userData } = user
-        return userData
-      })
+    } else {
+      users = Array.from(memoryStore.users.entries()).map(([id, user]) => ({
+        userId: id,
+        name: user.name,
+        avatar: user.avatar,
+        color: user.color,
+        profileImage: user.profileImage,
+        userNumber: user.userNumber,
+        isOnline: user.isOnline || false,
+      }))
+    }
+
+    // Filtrar usuários bloqueados
+    users = users.filter((user) => {
+      return !isUserBlockedSync(user.userId, userId) && !isUserBlockedSync(userId, user.userId)
+    })
 
     ws.send(
       JSON.stringify({
@@ -1222,18 +1575,39 @@ async function handleAdminGetUsers(ws) {
   if (!isAdminWebSocket(ws)) return
 
   try {
-    const snapshot = await db.collection("users").get()
-    const users = []
+    let users = []
 
-    snapshot.forEach((doc) => {
-      const data = doc.data()
-      users.push({
-        userId: doc.id,
-        ...data,
-        password: undefined, // Não enviar senha
-        createdAt: data.createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+    if (db) {
+      const snapshot = await db.collection("users").get()
+      users = snapshot.docs.map((doc) => {
+        const data = doc.data()
+        return {
+          userId: doc.id,
+          name: data.name,
+          email: data.email,
+          avatar: data.avatar,
+          color: data.color,
+          profileImage: data.profileImage,
+          userNumber: data.userNumber,
+          isOnline: data.isOnline || false,
+          createdAt: data.createdAt,
+          banned: data.banned || false,
+        }
       })
-    })
+    } else {
+      users = Array.from(memoryStore.users.entries()).map(([id, user]) => ({
+        userId: id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        color: user.color,
+        profileImage: user.profileImage,
+        userNumber: user.userNumber,
+        isOnline: user.isOnline || false,
+        createdAt: user.createdAt,
+        banned: user.banned || false,
+      }))
+    }
 
     ws.send(
       JSON.stringify({
@@ -1250,17 +1624,17 @@ async function handleAdminGetReports(ws) {
   if (!isAdminWebSocket(ws)) return
 
   try {
-    const snapshot = await db.collection("reports").orderBy("timestamp", "desc").get()
-    const reports = []
+    let reports = []
 
-    snapshot.forEach((doc) => {
-      const data = doc.data()
-      reports.push({
+    if (db) {
+      const snapshot = await db.collection("reports").orderBy("timestamp", "desc").get()
+      reports = snapshot.docs.map((doc) => ({
         id: doc.id,
-        ...data,
-        timestamp: data.timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
-      })
-    })
+        ...doc.data(),
+      }))
+    } else {
+      reports = [...memoryStore.reports].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    }
 
     ws.send(
       JSON.stringify({
@@ -1277,8 +1651,15 @@ async function handleAdminBanUser(ws, message) {
   if (!isAdminWebSocket(ws)) return
 
   try {
-    const userRef = db.collection("users").doc(message.userId)
-    await userRef.update({ banned: true })
+    if (db) {
+      await db.collection("users").doc(message.userId).update({ banned: true })
+    } else {
+      const userData = memoryStore.users.get(message.userId)
+      if (userData) {
+        userData.banned = true
+        memoryStore.users.set(message.userId, userData)
+      }
+    }
 
     // Desconectar usuário se estiver online
     const userData = connectedUsers.get(message.userId)
@@ -1321,8 +1702,12 @@ async function handleAdminDeleteUser(ws, message) {
       userData.ws.close()
     }
 
-    // Deletar do Firebase
-    await db.collection("users").doc(message.userId).delete()
+    // Deletar do armazenamento
+    if (db) {
+      await db.collection("users").doc(message.userId).delete()
+    } else {
+      memoryStore.users.delete(message.userId)
+    }
 
     // Remover das conexões
     connectedUsers.delete(message.userId)
@@ -1374,11 +1759,20 @@ async function handleDisconnection(ws) {
   for (const [userId, userData] of connectedUsers.entries()) {
     if (userData.ws === ws) {
       try {
-        // Atualizar status no Firebase
-        await db.collection("users").doc(userId).update({
-          isOnline: false,
-          lastSeen: admin.firestore.FieldValue.serverTimestamp(),
-        })
+        // Atualizar status no armazenamento
+        if (db) {
+          await db.collection("users").doc(userId).update({
+            isOnline: false,
+            lastSeen: admin.firestore.FieldValue.serverTimestamp(),
+          })
+        } else {
+          const user = memoryStore.users.get(userId)
+          if (user) {
+            user.isOnline = false
+            user.lastSeen = new Date().toISOString()
+            memoryStore.users.set(userId, user)
+          }
+        }
 
         // Remover da memória
         connectedUsers.delete(userId)
@@ -1445,10 +1839,17 @@ async function broadcastUserUpdate(userId) {
 
 async function broadcastToGroup(groupId, message) {
   try {
-    const groupDoc = await db.collection("groups").doc(groupId).get()
-    if (!groupDoc.exists) return
+    let groupData = null
 
-    const groupData = groupDoc.data()
+    if (db) {
+      const groupDoc = await db.collection("groups").doc(groupId).get()
+      if (!groupDoc.exists) return
+      groupData = groupDoc.data()
+    } else {
+      groupData = memoryStore.groups.get(groupId)
+      if (!groupData) return
+    }
+
     for (const memberId of groupData.members) {
       await broadcastToUser(memberId, message)
     }
@@ -1492,9 +1893,16 @@ function isAdminWebSocket(ws) {
 
 async function isUserBlocked(userId, blockedUserId) {
   try {
-    const userDoc = await db.collection("users").doc(userId).get()
-    const userData = userDoc.data()
-    return userData.blocked && userData.blocked.includes(blockedUserId)
+    let userData = null
+
+    if (db) {
+      const userDoc = await db.collection("users").doc(userId).get()
+      userData = userDoc.data()
+    } else {
+      userData = memoryStore.users.get(userId)
+    }
+
+    return userData && userData.blocked && userData.blocked.includes(blockedUserId)
   } catch (error) {
     return false
   }
@@ -1512,8 +1920,18 @@ async function generateUniqueNumber() {
   while (!isUnique) {
     number = Math.floor(10000000 + Math.random() * 90000000).toString()
 
-    const snapshot = await db.collection("users").where("userNumber", "==", number).get()
-    isUnique = snapshot.empty
+    if (db) {
+      const snapshot = await db.collection("users").where("userNumber", "==", number).get()
+      isUnique = snapshot.empty
+    } else {
+      isUnique = true
+      for (const user of memoryStore.users.values()) {
+        if (user.userNumber === number) {
+          isUnique = false
+          break
+        }
+      }
+    }
   }
 
   return number
