@@ -86,7 +86,194 @@ async function initializeDatabase() {
     }
 
     // Initialize products if empty - TODOS OS PRODUTOS MOVIDOS PARA CÁ
-    
+    if (productsCount === 0) {
+      const sampleProducts = [
+        {
+          name: "iPhone 15 Pro Max",
+          price: 8999.99,
+          cost: 6500.0,
+          category: "Smartphones",
+          emoji: "📱",
+          bestseller: true,
+          barcode: "789123456001",
+          createdAt: new Date(),
+        },
+        {
+          name: "MacBook Pro M3",
+          price: 12999.99,
+          cost: 9500.0,
+          category: "Notebooks",
+          emoji: "💻",
+          bestseller: true,
+          barcode: "789123456002",
+          createdAt: new Date(),
+        },
+        {
+          name: "AirPods Pro 2",
+          price: 2499.99,
+          cost: 1800.0,
+          category: "Áudio",
+          emoji: "🎧",
+          bestseller: true,
+          barcode: "789123456003",
+          createdAt: new Date(),
+        },
+        {
+          name: "iPad Air M2",
+          price: 4999.99,
+          cost: 3600.0,
+          category: "Tablets",
+          emoji: "📱",
+          barcode: "789123456004",
+          createdAt: new Date(),
+        },
+        {
+          name: "Apple Watch Ultra",
+          price: 6999.99,
+          cost: 5000.0,
+          category: "Wearables",
+          emoji: "⌚",
+          bestseller: true,
+          barcode: "789123456005",
+          createdAt: new Date(),
+        },
+        {
+          name: "Samsung Galaxy S24",
+          price: 6999.99,
+          cost: 5200.0,
+          category: "Smartphones",
+          emoji: "📱",
+          barcode: "789123456006",
+          createdAt: new Date(),
+        },
+        {
+          name: "Dell XPS 13",
+          price: 8999.99,
+          cost: 6800.0,
+          category: "Notebooks",
+          emoji: "💻",
+          barcode: "789123456007",
+          createdAt: new Date(),
+        },
+        {
+          name: "Sony WH-1000XM5",
+          price: 1999.99,
+          cost: 1400.0,
+          category: "Áudio",
+          emoji: "🎧",
+          barcode: "789123456008",
+          createdAt: new Date(),
+        },
+        {
+          name: "Nintendo Switch OLED",
+          price: 2499.99,
+          cost: 1900.0,
+          category: "Games",
+          emoji: "🎮",
+          bestseller: true,
+          barcode: "789123456009",
+          createdAt: new Date(),
+        },
+        {
+          name: "GoPro Hero 12",
+          price: 3499.99,
+          cost: 2600.0,
+          category: "Câmeras",
+          emoji: "📷",
+          barcode: "789123456010",
+          createdAt: new Date(),
+        },
+        {
+          name: "Kindle Oasis",
+          price: 1499.99,
+          cost: 1100.0,
+          category: "E-readers",
+          emoji: "📚",
+          barcode: "789123456011",
+          createdAt: new Date(),
+        },
+        {
+          name: "Echo Dot 5ª Gen",
+          price: 399.99,
+          cost: 280.0,
+          category: "Smart Home",
+          emoji: "🔊",
+          barcode: "789123456012",
+          createdAt: new Date(),
+        },
+        {
+          name: "Ring Video Doorbell",
+          price: 899.99,
+          cost: 650.0,
+          category: "Segurança",
+          emoji: "🚪",
+          barcode: "789123456013",
+          createdAt: new Date(),
+        },
+        {
+          name: "Fitbit Charge 6",
+          price: 1299.99,
+          cost: 950.0,
+          category: "Fitness",
+          emoji: "⌚",
+          barcode: "789123456014",
+          createdAt: new Date(),
+        },
+        {
+          name: "Bose SoundLink",
+          price: 799.99,
+          cost: 580.0,
+          category: "Áudio",
+          emoji: "🔊",
+          barcode: "789123456015",
+          createdAt: new Date(),
+        },
+        {
+          name: "Logitech MX Master 3",
+          price: 699.99,
+          cost: 500.0,
+          category: "Acessórios",
+          emoji: "🖱️",
+          barcode: "789123456016",
+          createdAt: new Date(),
+        },
+        {
+          name: "Samsung 4K Monitor",
+          price: 2999.99,
+          cost: 2200.0,
+          category: "Monitores",
+          emoji: "🖥️",
+          barcode: "789123456017",
+          createdAt: new Date(),
+        },
+        {
+          name: "Razer Mechanical Keyboard",
+          price: 1199.99,
+          cost: 850.0,
+          category: "Gaming",
+          emoji: "⌨️",
+          barcode: "789123456018",
+          createdAt: new Date(),
+        },
+        {
+          name: "Anker PowerBank 20K",
+          price: 299.99,
+          cost: 200.0,
+          category: "Acessórios",
+          emoji: "🔋",
+          barcode: "789123456019",
+          createdAt: new Date(),
+        },
+        {
+          name: "Tesla Model Y Charger",
+          price: 1999.99,
+          cost: 1400.0,
+          category: "Automotivo",
+          emoji: "🚗",
+          barcode: "789123456020",
+          createdAt: new Date(),
+        },
+      ]
 
       await db.collection("products").insertMany(sampleProducts)
       console.log("✅ 20 produtos de exemplo inseridos no MongoDB")
@@ -572,7 +759,24 @@ class SalesSystemServer {
         const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           try {
-            const sale = await this.saveSale(saleData)
+            // Calcular valores corretos
+            const subtotal = saleData.items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+            const totalCost = saleData.items.reduce((sum, item) => sum + item.cost * item.quantity, 0)
+            const discountAmount = subtotal * (saleData.discount / 100)
+            const total = subtotal - discountAmount
+            const profit = total - totalCost
+
+            const completeSaleData = {
+              items: saleData.items,
+              subtotal: subtotal,
+              discount: saleData.discount || 0,
+              total: total,
+              totalCost: totalCost,
+              profit: profit,
+              timestamp: saleData.timestamp || new Date().toISOString(),
+            }
+
+            const sale = await this.saveSale(completeSaleData)
 
             socket.emit("sale-finalized", { sale })
 
@@ -584,6 +788,7 @@ class SalesSystemServer {
               }
             }
           } catch (error) {
+            console.error("❌ Erro ao finalizar venda:", error)
             socket.emit("sale-finalize-error", error.message)
           }
         }
