@@ -1,21 +1,26 @@
 {
-  "name": "sistema-vendas-online",
+  "name": "loja-vialli-backend",
   "version": "1.0.0",
-  "description": "Sistema de vendas online com sincronização WebSocket",
+  "description": "Sistema de vendas profissional LOJA VIALLI com MongoDB",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": ["sales", "pos", "mongodb", "socketio", "express", "barcode", "ecommerce"],
+  "author": "LOJA VIALLI",
+  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.7.2",
-    "uuid": "^9.0.0"
+    "cors": "^2.8.5",
+    "mongodb": "^6.3.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=16.0.0"
   }
 }
