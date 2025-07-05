@@ -7,7 +7,7 @@ const path = require("path")
 const app = express()
 const server = http.createServer(app)
 
-// Configuração do CORS mais permissiva
+// Configuração do CORS
 const io = socketIo(server, {
   cors: {
     origin: "*",
@@ -29,20 +29,205 @@ app.use(
 )
 
 app.use(express.json())
-app.use(express.static("public"))
 
 // Servir arquivos estáticos
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"))
+  res.send("LOJA VIALLI - Backend funcionando!")
 })
 
-// Sistema de gerenciamento de conexões
+// Sistema de gerenciamento
 class SalesSystemServer {
   constructor() {
     this.connections = new Map() // socketId -> connectionData
     this.syncCodes = new Map() // code -> deviceData
     this.sales = []
-    this.connectedDevices = new Map() // code -> {desktop: socketId, mobile: socketId}
+    this.products = [
+      {
+        id: 1,
+        name: "iPhone 15 Pro Max",
+        price: 8999.99,
+        cost: 6500.0,
+        category: "Smartphones",
+        emoji: "📱",
+        bestseller: true,
+        barcode: "789123456001",
+      },
+      {
+        id: 2,
+        name: "MacBook Pro M3",
+        price: 12999.99,
+        cost: 9500.0,
+        category: "Notebooks",
+        emoji: "💻",
+        bestseller: true,
+        barcode: "789123456002",
+      },
+      {
+        id: 3,
+        name: "AirPods Pro 2",
+        price: 2499.99,
+        cost: 1800.0,
+        category: "Áudio",
+        emoji: "🎧",
+        bestseller: true,
+        barcode: "789123456003",
+      },
+      {
+        id: 4,
+        name: "iPad Air M2",
+        price: 4999.99,
+        cost: 3600.0,
+        category: "Tablets",
+        emoji: "📱",
+        barcode: "789123456004",
+      },
+      {
+        id: 5,
+        name: "Apple Watch Ultra",
+        price: 6999.99,
+        cost: 5000.0,
+        category: "Wearables",
+        emoji: "⌚",
+        bestseller: true,
+        barcode: "789123456005",
+      },
+      {
+        id: 6,
+        name: "Samsung Galaxy S24",
+        price: 6999.99,
+        cost: 5200.0,
+        category: "Smartphones",
+        emoji: "📱",
+        barcode: "789123456006",
+      },
+      {
+        id: 7,
+        name: "Dell XPS 13",
+        price: 8999.99,
+        cost: 6800.0,
+        category: "Notebooks",
+        emoji: "💻",
+        barcode: "789123456007",
+      },
+      {
+        id: 8,
+        name: "Sony WH-1000XM5",
+        price: 1999.99,
+        cost: 1400.0,
+        category: "Áudio",
+        emoji: "🎧",
+        barcode: "789123456008",
+      },
+      {
+        id: 9,
+        name: "Nintendo Switch OLED",
+        price: 2499.99,
+        cost: 1900.0,
+        category: "Games",
+        emoji: "🎮",
+        bestseller: true,
+        barcode: "789123456009",
+      },
+      {
+        id: 10,
+        name: "GoPro Hero 12",
+        price: 3499.99,
+        cost: 2600.0,
+        category: "Câmeras",
+        emoji: "📷",
+        barcode: "789123456010",
+      },
+      {
+        id: 11,
+        name: "Kindle Oasis",
+        price: 1499.99,
+        cost: 1100.0,
+        category: "E-readers",
+        emoji: "📚",
+        barcode: "789123456011",
+      },
+      {
+        id: 12,
+        name: "Echo Dot 5ª Gen",
+        price: 399.99,
+        cost: 280.0,
+        category: "Smart Home",
+        emoji: "🔊",
+        barcode: "789123456012",
+      },
+      {
+        id: 13,
+        name: "Ring Video Doorbell",
+        price: 899.99,
+        cost: 650.0,
+        category: "Segurança",
+        emoji: "🚪",
+        barcode: "789123456013",
+      },
+      {
+        id: 14,
+        name: "Fitbit Charge 6",
+        price: 1299.99,
+        cost: 950.0,
+        category: "Fitness",
+        emoji: "⌚",
+        barcode: "789123456014",
+      },
+      {
+        id: 15,
+        name: "Bose SoundLink",
+        price: 799.99,
+        cost: 580.0,
+        category: "Áudio",
+        emoji: "🔊",
+        barcode: "789123456015",
+      },
+      {
+        id: 16,
+        name: "Logitech MX Master 3",
+        price: 699.99,
+        cost: 500.0,
+        category: "Acessórios",
+        emoji: "🖱️",
+        barcode: "789123456016",
+      },
+      {
+        id: 17,
+        name: "Samsung 4K Monitor",
+        price: 2999.99,
+        cost: 2200.0,
+        category: "Monitores",
+        emoji: "🖥️",
+        barcode: "789123456017",
+      },
+      {
+        id: 18,
+        name: "Razer Mechanical Keyboard",
+        price: 1199.99,
+        cost: 850.0,
+        category: "Gaming",
+        emoji: "⌨️",
+        barcode: "789123456018",
+      },
+      {
+        id: 19,
+        name: "Anker PowerBank 20K",
+        price: 299.99,
+        cost: 200.0,
+        category: "Acessórios",
+        emoji: "🔋",
+        barcode: "789123456019",
+      },
+      {
+        id: 20,
+        name: "Tesla Model Y Charger",
+        price: 1999.99,
+        cost: 1400.0,
+        category: "Automotivo",
+        emoji: "🚗",
+        barcode: "789123456020",
+      },
+    ]
 
     this.setupSocketHandlers()
   }
@@ -60,7 +245,7 @@ class SalesSystemServer {
     io.on("connection", (socket) => {
       console.log(`🔗 Nova conexão: ${socket.id}`)
 
-      // Gerar código de sincronização para dispositivos móveis
+      // Gerar código de sincronização
       socket.on("generate-sync-code", (data) => {
         const code = this.generateSyncCode()
         const deviceData = {
@@ -105,17 +290,14 @@ class SalesSystemServer {
         }
 
         // Estabelecer conexão
-        this.connectedDevices.set(code, {
-          desktop: socket.id,
-          mobile: mobileSocketId,
-          deviceType: deviceData.deviceType,
-        })
-
         this.connections.set(socket.id, {
           code,
           role: "desktop",
           connectedMobile: mobileSocketId,
           deviceType: deviceData.deviceType,
+          cart: [],
+          total: 0,
+          discount: 0,
         })
 
         // Atualizar dados do mobile
@@ -130,7 +312,7 @@ class SalesSystemServer {
         socket.emit("connection-success", {
           code,
           deviceType: deviceData.deviceType,
-          connectedDevice: mobileSocketId,
+          products: this.products,
         })
 
         mobileSocket.emit("device-connected", {
@@ -153,8 +335,12 @@ class SalesSystemServer {
 
         const desktopSocket = io.sockets.sockets.get(connection.connectedDesktop)
         if (desktopSocket) {
-          console.log(`📦 Produto escaneado: ${data.product.name}`)
-          desktopSocket.emit("product-scanned", data)
+          // Buscar produto completo
+          const product = this.products.find((p) => p.barcode === data.product.barcode || p.id === data.product.id)
+          if (product) {
+            console.log(`📦 Produto escaneado: ${product.name}`)
+            desktopSocket.emit("product-scanned", { product })
+          }
         }
       })
 
@@ -162,6 +348,7 @@ class SalesSystemServer {
       socket.on("apply-discount", (discount) => {
         const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
+          connection.discount = discount
           console.log(`💸 Desconto aplicado: ${discount}%`)
           socket.emit("discount-applied", { discount })
         }
@@ -171,15 +358,15 @@ class SalesSystemServer {
       socket.on("calculate-change", (paidAmount) => {
         const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
-          // Simular cálculo (em uma aplicação real, você teria os dados do carrinho)
-          const mockTotal = 100 // Valor mockado para demonstração
-          const change = paidAmount - mockTotal
+          const total = connection.total || 0
+          const finalTotal = total * (1 - (connection.discount || 0) / 100)
+          const change = paidAmount - finalTotal
           const insufficient = change < 0
 
           console.log(`💰 Troco calculado: R$ ${change.toFixed(2)}`)
           socket.emit("change-calculated", {
             paidAmount,
-            finalTotal: mockTotal,
+            finalTotal,
             change: Math.max(0, change),
             insufficient,
           })
@@ -193,14 +380,14 @@ class SalesSystemServer {
           const sale = {
             id: Date.now().toString(),
             code: `VDA${Date.now().toString().slice(-6)}`,
-            timestamp: Date.now(),
+            timestamp: new Date().toISOString(),
             ...saleData,
             items: saleData.items || [],
-            profit: saleData.finalTotal - (saleData.totalCost || 0),
+            profit: (saleData.finalTotal || 0) - (saleData.totalCost || 0),
           }
 
           this.sales.push(sale)
-          console.log(`🎉 Venda finalizada: ${sale.code} - R$ ${sale.finalTotal.toFixed(2)}`)
+          console.log(`🎉 Venda finalizada: ${sale.code} - R$ ${sale.finalTotal?.toFixed(2)}`)
 
           socket.emit("sale-finalized", { sale })
 
@@ -211,13 +398,21 @@ class SalesSystemServer {
               mobileSocket.emit("sale-finalized", { sale })
             }
           }
+
+          // Limpar carrinho
+          connection.cart = []
+          connection.total = 0
+          connection.discount = 0
         }
       })
 
       // Remover item do carrinho
       socket.on("remove-item", (cartId) => {
-        console.log(`🗑️ Item removido: ${cartId}`)
-        // Lógica para remover item seria implementada aqui
+        const connection = this.connections.get(socket.id)
+        if (connection && connection.role === "desktop") {
+          console.log(`🗑️ Item removido: ${cartId}`)
+          // Lógica para remover item seria implementada aqui
+        }
       })
 
       // Desconectar todos os dispositivos
@@ -259,7 +454,6 @@ class SalesSystemServer {
           // Limpar código de sincronização se existir
           if (connection.code) {
             this.syncCodes.delete(connection.code)
-            this.connectedDevices.delete(connection.code)
           }
         }
 
@@ -268,12 +462,12 @@ class SalesSystemServer {
     })
   }
 
-  // Métodos de API REST para estatísticas
+  // Métodos de API REST
   getStats() {
     return {
       totalSales: this.sales.length,
-      totalRevenue: this.sales.reduce((sum, sale) => sum + sale.finalTotal, 0),
-      totalProfit: this.sales.reduce((sum, sale) => sum + sale.profit, 0),
+      totalRevenue: this.sales.reduce((sum, sale) => sum + (sale.finalTotal || 0), 0),
+      totalProfit: this.sales.reduce((sum, sale) => sum + (sale.profit || 0), 0),
       connectedDevices: this.connections.size,
       activeCodes: this.syncCodes.size,
     }
@@ -292,12 +486,17 @@ app.get("/api/sales", (req, res) => {
   res.json(salesSystem.sales)
 })
 
+app.get("/api/products", (req, res) => {
+  res.json(salesSystem.products)
+})
+
 app.get("/api/health", (req, res) => {
   res.json({
     status: "OK",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     connections: salesSystem.connections.size,
+    message: "LOJA VIALLI - Backend funcionando perfeitamente!",
   })
 })
 
@@ -313,9 +512,10 @@ server.listen(PORT, () => {
   console.log(`🚀 LOJA VIALLI - Servidor rodando na porta ${PORT}`)
   console.log(`🌐 Acesse: http://localhost:${PORT}`)
   console.log(`📱 Sistema de vendas profissional ativo!`)
+  console.log(`💻 Backend URL: https://backend-chat-2-033y.onrender.com`)
 })
 
-// Tratamento de erros não capturados
+// Tratamento de erros
 process.on("uncaughtException", (err) => {
   console.error("❌ Erro não capturado:", err)
 })
