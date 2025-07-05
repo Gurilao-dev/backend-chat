@@ -31,8 +31,7 @@ app.use(
 app.use(express.json())
 
 // MongoDB Configuration - USANDO A MESMA URI QUE FUNCIONA
-const MONGODB_URI =
-  "mongodb+srv://joaovitormagnagovialli:A7YXV8vHYhjid55G@gorila.vanwqbp.mongodb.net/?retryWrites=true&w=majority&appName=Gorila"
+const uri = 'mongodb+srv://joaovitormagnagovialli:A7YXV8vHYhjid55G@gorila.vanwqbp.mongodb.net/?retryWrites=true&w=majority&appName=Gorila';
 const DB_NAME = "loja_vialli"
 
 let db = null
