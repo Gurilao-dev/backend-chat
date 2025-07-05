@@ -31,35 +31,26 @@ app.use(
 app.use(express.json())
 
 // Servir arquivos estáticos
-app.use(express.static(path.join(__dirname, "public")))
-
-// Rota principal
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"))
+  res.send("LOJA VIALLI - Backend funcionando!")
 })
-
-// Armazenar conexões e códigos de sincronização
-const connections = new Map()
-const syncCodes = new Map()
-
-// Gerar código de sincronização de 6 dígitos
-function generateSyncCode() {
-  return Math.random().toString(36).substr(2, 6).toUpperCase()
-}
 
 // Sistema de gerenciamento
 class SalesSystemServer {
   constructor() {
+    this.connections = new Map() // socketId -> connectionData
+    this.syncCodes = new Map() // code -> deviceData
+    this.sales = []
     this.products = [
       {
         id: 1,
         name: "iPhone 15 Pro Max",
-        price: 15.90,
-        cost: 10.25,
+        price: 8999.99,
+        cost: 6500.0,
         category: "Smartphones",
         emoji: "📱",
         bestseller: true,
-        barcode: "7898079670025",
+        barcode: "789123456001",
       },
       {
         id: 2,
@@ -241,13 +232,47 @@ class SalesSystemServer {
     this.setupSocketHandlers()
   }
 
+  generateSyncCode() {
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    let code = ""
+    for (let i = 0; i < 6; i++) {
+      code += characters.charAt(Math.floor(Math.random() * characters.length))
+    }
+    return code
+  }
+
+  generateProductId() {
+    return Math.max(...this.products.map((p) => p.id), 0) + 1
+  }
+
+  getCategoryEmoji(category) {
+    const emojiMap = {
+      Smartphones: "📱",
+      Notebooks: "💻",
+      Áudio: "🎧",
+      Tablets: "📱",
+      Wearables: "⌚",
+      Games: "🎮",
+      Câmeras: "📷",
+      "E-readers": "📚",
+      "Smart Home": "🔊",
+      Segurança: "🚪",
+      Fitness: "⌚",
+      Acessórios: "🔋",
+      Monitores: "🖥️",
+      Gaming: "⌨️",
+      Automotivo: "🚗",
+    }
+    return emojiMap[category] || "📦"
+  }
+
   setupSocketHandlers() {
     io.on("connection", (socket) => {
       console.log(`🔗 Nova conexão: ${socket.id}`)
 
       // Gerar código de sincronização
       socket.on("generate-sync-code", (data) => {
-        const code = generateSyncCode()
+        const code = this.generateSyncCode()
         const deviceData = {
           code,
           deviceType: data.deviceType,
@@ -255,18 +280,18 @@ class SalesSystemServer {
           timestamp: Date.now(),
         }
 
-        syncCodes.set(code, deviceData)
-        connections.set(socket.id, { ...deviceData, role: "mobile" })
+        this.syncCodes.set(code, deviceData)
+        this.connections.set(socket.id, { ...deviceData, role: "mobile" })
 
         console.log(`📱 Código gerado: ${code} para dispositivo ${data.deviceType}`)
         socket.emit("sync-code-generated", { code, deviceType: data.deviceType })
 
-        // Limpar código após 5 minutos
+        // Limpar código após 10 minutos
         setTimeout(
           () => {
-            syncCodes.delete(code)
+            this.syncCodes.delete(code)
           },
-          5 * 60 * 1000,
+          10 * 60 * 1000,
         )
       })
 
@@ -274,7 +299,7 @@ class SalesSystemServer {
       socket.on("connect-with-code", (code) => {
         console.log(`💻 Desktop tentando conectar com código: ${code}`)
 
-        const deviceData = syncCodes.get(code)
+        const deviceData = this.syncCodes.get(code)
         if (!deviceData) {
           socket.emit("connection-error", "Código inválido ou expirado")
           return
@@ -290,7 +315,7 @@ class SalesSystemServer {
         }
 
         // Estabelecer conexão
-        connections.set(socket.id, {
+        this.connections.set(socket.id, {
           code,
           role: "desktop",
           connectedMobile: mobileSocketId,
@@ -301,7 +326,7 @@ class SalesSystemServer {
         })
 
         // Atualizar dados do mobile
-        const mobileConnection = connections.get(mobileSocketId)
+        const mobileConnection = this.connections.get(mobileSocketId)
         if (mobileConnection) {
           mobileConnection.connectedDesktop = socket.id
         }
@@ -322,12 +347,12 @@ class SalesSystemServer {
         })
 
         // Remover código usado
-        syncCodes.delete(code)
+        this.syncCodes.delete(code)
       })
 
       // Produto escaneado pelo mobile
       socket.on("product-scanned", (data) => {
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (!connection || !connection.connectedDesktop) {
           console.log("❌ Mobile não conectado a desktop")
           return
@@ -346,7 +371,7 @@ class SalesSystemServer {
 
       // Aplicar desconto
       socket.on("apply-discount", (discount) => {
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           connection.discount = discount
           console.log(`💸 Desconto aplicado: ${discount}%`)
@@ -356,7 +381,7 @@ class SalesSystemServer {
 
       // Calcular troco
       socket.on("calculate-change", (paidAmount) => {
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           const total = connection.total || 0
           const finalTotal = total * (1 - (connection.discount || 0) / 100)
@@ -375,7 +400,7 @@ class SalesSystemServer {
 
       // Finalizar venda
       socket.on("finalize-sale", (saleData) => {
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           const sale = {
             id: Date.now().toString(),
@@ -386,6 +411,7 @@ class SalesSystemServer {
             profit: (saleData.finalTotal || 0) - (saleData.totalCost || 0),
           }
 
+          this.sales.push(sale)
           console.log(`🎉 Venda finalizada: ${sale.code} - R$ ${sale.finalTotal?.toFixed(2)}`)
 
           socket.emit("sale-finalized", { sale })
@@ -405,9 +431,73 @@ class SalesSystemServer {
         }
       })
 
+      // Adicionar novo produto
+      socket.on("add-new-product", (productData) => {
+        console.log(`📦 Tentativa de cadastro de produto: ${productData.name}`)
+
+        // Validar dados do produto
+        if (!productData.name || !productData.price || !productData.category || !productData.barcode) {
+          socket.emit("product-add-error", "Dados do produto incompletos")
+          return
+        }
+
+        // Verificar se código de barras já existe
+        const existingProduct = this.products.find((p) => p.barcode === productData.barcode)
+        if (existingProduct) {
+          socket.emit("product-add-error", `Código de barras já existe no produto: ${existingProduct.name}`)
+          return
+        }
+
+        // Criar novo produto
+        const newProduct = {
+          id: this.generateProductId(),
+          name: productData.name,
+          price: Number.parseFloat(productData.price),
+          cost: Number.parseFloat(productData.cost) || 0,
+          category: productData.category,
+          bestseller: productData.bestseller || false,
+          barcode: productData.barcode,
+          emoji: this.getCategoryEmoji(productData.category),
+          createdAt: new Date().toISOString(),
+          createdBy: socket.id,
+        }
+
+        // Adicionar à lista de produtos
+        this.products.push(newProduct)
+
+        console.log(`✅ Produto cadastrado: ${newProduct.name} - ID: ${newProduct.id}`)
+
+        // Notificar o dispositivo que cadastrou
+        socket.emit("product-added", {
+          product: newProduct,
+          message: "Produto cadastrado com sucesso!",
+        })
+
+        // Notificar todos os dispositivos conectados sobre o novo produto
+        io.emit("product-list-updated", {
+          products: this.products,
+          newProduct: newProduct,
+        })
+      })
+
+      // Obter lista de produtos
+      socket.on("get-products", () => {
+        socket.emit("products-list", { products: this.products })
+      })
+
+      // Buscar produto por código de barras
+      socket.on("search-product-by-barcode", (barcode) => {
+        const product = this.products.find((p) => p.barcode === barcode)
+        socket.emit("product-search-result", {
+          barcode,
+          product: product || null,
+          found: !!product,
+        })
+      })
+
       // Remover item do carrinho
       socket.on("remove-item", (cartId) => {
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           console.log(`🗑️ Item removido: ${cartId}`)
           // Lógica para remover item seria implementada aqui
@@ -416,7 +506,7 @@ class SalesSystemServer {
 
       // Desconectar todos os dispositivos
       socket.on("disconnect-all", () => {
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           console.log(`🔌 Desconectando todos os dispositivos do desktop ${socket.id}`)
 
@@ -435,7 +525,7 @@ class SalesSystemServer {
       socket.on("disconnect", () => {
         console.log(`🔌 Desconexão: ${socket.id}`)
 
-        const connection = connections.get(socket.id)
+        const connection = this.connections.get(socket.id)
         if (connection) {
           // Notificar dispositivo conectado sobre a desconexão
           if (connection.role === "desktop" && connection.connectedMobile) {
@@ -452,13 +542,24 @@ class SalesSystemServer {
 
           // Limpar código de sincronização se existir
           if (connection.code) {
-            syncCodes.delete(connection.code)
+            this.syncCodes.delete(connection.code)
           }
         }
 
-        connections.delete(socket.id)
+        this.connections.delete(socket.id)
       })
     })
+  }
+
+  // Métodos de API REST
+  getStats() {
+    return {
+      totalSales: this.sales.length,
+      totalRevenue: this.sales.reduce((sum, sale) => sum + (sale.finalTotal || 0), 0),
+      totalProfit: this.sales.reduce((sum, sale) => sum + (sale.profit || 0), 0),
+      connectedDevices: this.connections.size,
+      activeCodes: this.syncCodes.size,
+    }
   }
 }
 
@@ -466,8 +567,66 @@ class SalesSystemServer {
 const salesSystem = new SalesSystemServer()
 
 // Rotas da API
+app.get("/api/stats", (req, res) => {
+  res.json(salesSystem.getStats())
+})
+
+app.get("/api/sales", (req, res) => {
+  res.json(salesSystem.sales)
+})
+
 app.get("/api/products", (req, res) => {
   res.json(salesSystem.products)
+})
+
+app.post("/api/products", (req, res) => {
+  const productData = req.body
+
+  // Validar dados
+  if (!productData.name || !productData.price || !productData.category || !productData.barcode) {
+    return res.status(400).json({ error: "Dados do produto incompletos" })
+  }
+
+  // Verificar se código de barras já existe
+  const existingProduct = salesSystem.products.find((p) => p.barcode === productData.barcode)
+  if (existingProduct) {
+    return res.status(409).json({
+      error: `Código de barras já existe no produto: ${existingProduct.name}`,
+    })
+  }
+
+  // Criar novo produto
+  const newProduct = {
+    id: salesSystem.generateProductId(),
+    name: productData.name,
+    price: Number.parseFloat(productData.price),
+    cost: Number.parseFloat(productData.cost) || 0,
+    category: productData.category,
+    bestseller: productData.bestseller || false,
+    barcode: productData.barcode,
+    emoji: salesSystem.getCategoryEmoji(productData.category),
+    createdAt: new Date().toISOString(),
+  }
+
+  // Adicionar à lista
+  salesSystem.products.push(newProduct)
+
+  res.status(201).json({
+    success: true,
+    product: newProduct,
+    message: "Produto cadastrado com sucesso!",
+  })
+})
+
+app.get("/api/products/:barcode", (req, res) => {
+  const barcode = req.params.barcode
+  const product = salesSystem.products.find((p) => p.barcode === barcode)
+
+  if (product) {
+    res.json({ found: true, product })
+  } else {
+    res.status(404).json({ found: false, message: "Produto não encontrado" })
+  }
 })
 
 app.get("/api/health", (req, res) => {
@@ -475,7 +634,7 @@ app.get("/api/health", (req, res) => {
     status: "OK",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    connections: connections.size,
+    connections: salesSystem.connections.size,
     message: "LOJA VIALLI - Backend funcionando perfeitamente!",
   })
 })
