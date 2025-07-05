@@ -85,7 +85,7 @@ async function initializeDatabase() {
       console.log("✅ Categorias padrão inseridas no MongoDB")
     }
 
-    // Initialize products if empty
+    // Initialize products if empty - TODOS OS PRODUTOS MOVIDOS PARA CÁ
     if (productsCount === 0) {
       const sampleProducts = [
         {
@@ -276,7 +276,7 @@ async function initializeDatabase() {
       ]
 
       await db.collection("products").insertMany(sampleProducts)
-      console.log("✅ Produtos de exemplo inseridos no MongoDB")
+      console.log("✅ 20 produtos de exemplo inseridos no MongoDB")
     }
 
     console.log(`📦 ${productsCount} produtos encontrados no MongoDB`)
