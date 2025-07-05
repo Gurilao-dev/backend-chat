@@ -1,34 +1,21 @@
 {
-  "name": "loja-vialli-sistema-vendas",
-  "version": "2.0.0",
-  "description": "Sistema de vendas online avançado com sincronização em tempo real",
+  "name": "sistema-vendas-online",
+  "version": "1.0.0",
+  "description": "Sistema de vendas online com sincronização WebSocket",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon server.js"
   },
-  "keywords": ["vendas", "pos", "barcode", "scanner", "websocket", "realtime"],
-  "author": "Loja Vialli",
-  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.7.2",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.1"
   },
   "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=8.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/loja-vialli/sistema-vendas.git"
-  },
-  "bugs": {
-    "url": "https://github.com/loja-vialli/sistema-vendas/issues"
-  },
-  "homepage": "https://github.com/loja-vialli/sistema-vendas#readme"
+    "node": ">=14.0.0"
+  }
 }
