@@ -53,10 +53,10 @@ class SalesSystemServer {
     this.products = [
       {
         id: 1,
-        name: "Manteiga",
+        name: "iPhone 15 Pro Max",
         price: 15.90,
         cost: 10.25,
-        category: "Alimentos",
+        category: "Smartphones",
         emoji: "📱",
         bestseller: true,
         barcode: "7898079670025",
