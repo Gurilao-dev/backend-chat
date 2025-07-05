@@ -31,16 +31,25 @@ app.use(
 app.use(express.json())
 
 // Servir arquivos estáticos
+app.use(express.static(path.join(__dirname, "public")))
+
+// Rota principal
 app.get("/", (req, res) => {
-  res.send("LOJA VIALLI - Backend funcionando!")
+  res.sendFile(path.join(__dirname, "index.html"))
 })
+
+// Armazenar conexões e códigos de sincronização
+const connections = new Map()
+const syncCodes = new Map()
+
+// Gerar código de sincronização de 6 dígitos
+function generateSyncCode() {
+  return Math.random().toString(36).substr(2, 6).toUpperCase()
+}
 
 // Sistema de gerenciamento
 class SalesSystemServer {
   constructor() {
-    this.connections = new Map() // socketId -> connectionData
-    this.syncCodes = new Map() // code -> deviceData
-    this.sales = []
     this.products = [
       {
         id: 1,
@@ -232,22 +241,13 @@ class SalesSystemServer {
     this.setupSocketHandlers()
   }
 
-  generateSyncCode() {
-    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-    let code = ""
-    for (let i = 0; i < 6; i++) {
-      code += characters.charAt(Math.floor(Math.random() * characters.length))
-    }
-    return code
-  }
-
   setupSocketHandlers() {
     io.on("connection", (socket) => {
       console.log(`🔗 Nova conexão: ${socket.id}`)
 
       // Gerar código de sincronização
       socket.on("generate-sync-code", (data) => {
-        const code = this.generateSyncCode()
+        const code = generateSyncCode()
         const deviceData = {
           code,
           deviceType: data.deviceType,
@@ -255,18 +255,18 @@ class SalesSystemServer {
           timestamp: Date.now(),
         }
 
-        this.syncCodes.set(code, deviceData)
-        this.connections.set(socket.id, { ...deviceData, role: "mobile" })
+        syncCodes.set(code, deviceData)
+        connections.set(socket.id, { ...deviceData, role: "mobile" })
 
         console.log(`📱 Código gerado: ${code} para dispositivo ${data.deviceType}`)
         socket.emit("sync-code-generated", { code, deviceType: data.deviceType })
 
-        // Limpar código após 10 minutos
+        // Limpar código após 5 minutos
         setTimeout(
           () => {
-            this.syncCodes.delete(code)
+            syncCodes.delete(code)
           },
-          10 * 60 * 1000,
+          5 * 60 * 1000,
         )
       })
 
@@ -274,7 +274,7 @@ class SalesSystemServer {
       socket.on("connect-with-code", (code) => {
         console.log(`💻 Desktop tentando conectar com código: ${code}`)
 
-        const deviceData = this.syncCodes.get(code)
+        const deviceData = syncCodes.get(code)
         if (!deviceData) {
           socket.emit("connection-error", "Código inválido ou expirado")
           return
@@ -290,7 +290,7 @@ class SalesSystemServer {
         }
 
         // Estabelecer conexão
-        this.connections.set(socket.id, {
+        connections.set(socket.id, {
           code,
           role: "desktop",
           connectedMobile: mobileSocketId,
@@ -301,7 +301,7 @@ class SalesSystemServer {
         })
 
         // Atualizar dados do mobile
-        const mobileConnection = this.connections.get(mobileSocketId)
+        const mobileConnection = connections.get(mobileSocketId)
         if (mobileConnection) {
           mobileConnection.connectedDesktop = socket.id
         }
@@ -322,12 +322,12 @@ class SalesSystemServer {
         })
 
         // Remover código usado
-        this.syncCodes.delete(code)
+        syncCodes.delete(code)
       })
 
       // Produto escaneado pelo mobile
       socket.on("product-scanned", (data) => {
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (!connection || !connection.connectedDesktop) {
           console.log("❌ Mobile não conectado a desktop")
           return
@@ -346,7 +346,7 @@ class SalesSystemServer {
 
       // Aplicar desconto
       socket.on("apply-discount", (discount) => {
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           connection.discount = discount
           console.log(`💸 Desconto aplicado: ${discount}%`)
@@ -356,7 +356,7 @@ class SalesSystemServer {
 
       // Calcular troco
       socket.on("calculate-change", (paidAmount) => {
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           const total = connection.total || 0
           const finalTotal = total * (1 - (connection.discount || 0) / 100)
@@ -375,7 +375,7 @@ class SalesSystemServer {
 
       // Finalizar venda
       socket.on("finalize-sale", (saleData) => {
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           const sale = {
             id: Date.now().toString(),
@@ -386,7 +386,6 @@ class SalesSystemServer {
             profit: (saleData.finalTotal || 0) - (saleData.totalCost || 0),
           }
 
-          this.sales.push(sale)
           console.log(`🎉 Venda finalizada: ${sale.code} - R$ ${sale.finalTotal?.toFixed(2)}`)
 
           socket.emit("sale-finalized", { sale })
@@ -408,7 +407,7 @@ class SalesSystemServer {
 
       // Remover item do carrinho
       socket.on("remove-item", (cartId) => {
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           console.log(`🗑️ Item removido: ${cartId}`)
           // Lógica para remover item seria implementada aqui
@@ -417,7 +416,7 @@ class SalesSystemServer {
 
       // Desconectar todos os dispositivos
       socket.on("disconnect-all", () => {
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (connection && connection.role === "desktop") {
           console.log(`🔌 Desconectando todos os dispositivos do desktop ${socket.id}`)
 
@@ -436,7 +435,7 @@ class SalesSystemServer {
       socket.on("disconnect", () => {
         console.log(`🔌 Desconexão: ${socket.id}`)
 
-        const connection = this.connections.get(socket.id)
+        const connection = connections.get(socket.id)
         if (connection) {
           // Notificar dispositivo conectado sobre a desconexão
           if (connection.role === "desktop" && connection.connectedMobile) {
@@ -453,24 +452,13 @@ class SalesSystemServer {
 
           // Limpar código de sincronização se existir
           if (connection.code) {
-            this.syncCodes.delete(connection.code)
+            syncCodes.delete(connection.code)
           }
         }
 
-        this.connections.delete(socket.id)
+        connections.delete(socket.id)
       })
     })
-  }
-
-  // Métodos de API REST
-  getStats() {
-    return {
-      totalSales: this.sales.length,
-      totalRevenue: this.sales.reduce((sum, sale) => sum + (sale.finalTotal || 0), 0),
-      totalProfit: this.sales.reduce((sum, sale) => sum + (sale.profit || 0), 0),
-      connectedDevices: this.connections.size,
-      activeCodes: this.syncCodes.size,
-    }
   }
 }
 
@@ -478,14 +466,6 @@ class SalesSystemServer {
 const salesSystem = new SalesSystemServer()
 
 // Rotas da API
-app.get("/api/stats", (req, res) => {
-  res.json(salesSystem.getStats())
-})
-
-app.get("/api/sales", (req, res) => {
-  res.json(salesSystem.sales)
-})
-
 app.get("/api/products", (req, res) => {
   res.json(salesSystem.products)
 })
@@ -495,7 +475,7 @@ app.get("/api/health", (req, res) => {
     status: "OK",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    connections: salesSystem.connections.size,
+    connections: connections.size,
     message: "LOJA VIALLI - Backend funcionando perfeitamente!",
   })
 })
