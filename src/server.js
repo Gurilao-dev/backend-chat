@@ -30,7 +30,7 @@ app.use(
 
 app.use(express.json())
 
-// MongoDB Configuration
+// MongoDB Configuration - USANDO A MESMA URI QUE FUNCIONA
 const MONGODB_URI =
   "mongodb+srv://joaovitormagnagovialli:A7YXV8vHYhjid55G@gorila.vanwqbp.mongodb.net/?retryWrites=true&w=majority&appName=Gorila"
 const DB_NAME = "loja_vialli"
@@ -38,13 +38,19 @@ const DB_NAME = "loja_vialli"
 let db = null
 let client = null
 
-// Connect to MongoDB
+// Connect to MongoDB - USANDO A LÓGICA DO EXEMPLO QUE FUNCIONA
 async function connectToMongoDB() {
   try {
+    console.log("🔄 Conectando ao MongoDB Atlas...")
     client = new MongoClient(MONGODB_URI)
     await client.connect()
+
+    // Testar conexão
+    await client.db("admin").command({ ping: 1 })
+    console.log("✅ Ping ao MongoDB bem-sucedido!")
+
     db = client.db(DB_NAME)
-    console.log("✅ Conectado ao MongoDB Atlas")
+    console.log(`✅ Conectado ao banco de dados: ${DB_NAME}`)
 
     // Initialize collections and sample data
     await initializeDatabase()
@@ -54,15 +60,40 @@ async function connectToMongoDB() {
   }
 }
 
-// Initialize database with sample data
+// Initialize database with sample data - GARANTIR QUE AS COLEÇÕES SEJAM CRIADAS
 async function initializeDatabase() {
   try {
+    console.log("🔄 Inicializando banco de dados...")
+
+    // Criar coleções se não existirem
+    const collections = await db.listCollections().toArray()
+    const collectionNames = collections.map((col) => col.name)
+
+    if (!collectionNames.includes("products")) {
+      await db.createCollection("products")
+      console.log("✅ Coleção 'products' criada")
+    }
+
+    if (!collectionNames.includes("categories")) {
+      await db.createCollection("categories")
+      console.log("✅ Coleção 'categories' criada")
+    }
+
+    if (!collectionNames.includes("sales")) {
+      await db.createCollection("sales")
+      console.log("✅ Coleção 'sales' criada")
+    }
+
     // Check if products collection exists and has data
     const productsCount = await db.collection("products").countDocuments()
     const categoriesCount = await db.collection("categories").countDocuments()
 
+    console.log(`📊 Produtos existentes: ${productsCount}`)
+    console.log(`📊 Categorias existentes: ${categoriesCount}`)
+
     // Initialize categories if empty
     if (categoriesCount === 0) {
+      console.log("🏷️ Inserindo categorias padrão...")
       const defaultCategories = [
         { name: "Smartphones", emoji: "📱", isDefault: true, createdAt: new Date() },
         { name: "Notebooks", emoji: "💻", isDefault: true, createdAt: new Date() },
@@ -81,12 +112,13 @@ async function initializeDatabase() {
         { name: "Automotivo", emoji: "🚗", isDefault: true, createdAt: new Date() },
       ]
 
-      await db.collection("categories").insertMany(defaultCategories)
-      console.log("✅ Categorias padrão inseridas no MongoDB")
+      const result = await db.collection("categories").insertMany(defaultCategories)
+      console.log(`✅ ${result.insertedCount} categorias padrão inseridas no MongoDB`)
     }
 
-    // Initialize products if empty - TODOS OS PRODUTOS MOVIDOS PARA CÁ
+    // Initialize products if empty
     if (productsCount === 0) {
+      console.log("📦 Inserindo produtos de exemplo...")
       const sampleProducts = [
         {
           name: "iPhone 15 Pro Max",
@@ -183,106 +215,35 @@ async function initializeDatabase() {
           barcode: "789123456010",
           createdAt: new Date(),
         },
-        {
-          name: "Kindle Oasis",
-          price: 1499.99,
-          cost: 1100.0,
-          category: "E-readers",
-          emoji: "📚",
-          barcode: "789123456011",
-          createdAt: new Date(),
-        },
-        {
-          name: "Echo Dot 5ª Gen",
-          price: 399.99,
-          cost: 280.0,
-          category: "Smart Home",
-          emoji: "🔊",
-          barcode: "789123456012",
-          createdAt: new Date(),
-        },
-        {
-          name: "Ring Video Doorbell",
-          price: 899.99,
-          cost: 650.0,
-          category: "Segurança",
-          emoji: "🚪",
-          barcode: "789123456013",
-          createdAt: new Date(),
-        },
-        {
-          name: "Fitbit Charge 6",
-          price: 1299.99,
-          cost: 950.0,
-          category: "Fitness",
-          emoji: "⌚",
-          barcode: "789123456014",
-          createdAt: new Date(),
-        },
-        {
-          name: "Bose SoundLink",
-          price: 799.99,
-          cost: 580.0,
-          category: "Áudio",
-          emoji: "🔊",
-          barcode: "789123456015",
-          createdAt: new Date(),
-        },
-        {
-          name: "Logitech MX Master 3",
-          price: 699.99,
-          cost: 500.0,
-          category: "Acessórios",
-          emoji: "🖱️",
-          barcode: "789123456016",
-          createdAt: new Date(),
-        },
-        {
-          name: "Samsung 4K Monitor",
-          price: 2999.99,
-          cost: 2200.0,
-          category: "Monitores",
-          emoji: "🖥️",
-          barcode: "789123456017",
-          createdAt: new Date(),
-        },
-        {
-          name: "Razer Mechanical Keyboard",
-          price: 1199.99,
-          cost: 850.0,
-          category: "Gaming",
-          emoji: "⌨️",
-          barcode: "789123456018",
-          createdAt: new Date(),
-        },
-        {
-          name: "Anker PowerBank 20K",
-          price: 299.99,
-          cost: 200.0,
-          category: "Acessórios",
-          emoji: "🔋",
-          barcode: "789123456019",
-          createdAt: new Date(),
-        },
-        {
-          name: "Tesla Model Y Charger",
-          price: 1999.99,
-          cost: 1400.0,
-          category: "Automotivo",
-          emoji: "🚗",
-          barcode: "789123456020",
-          createdAt: new Date(),
-        },
       ]
 
-      await db.collection("products").insertMany(sampleProducts)
-      console.log("✅ 20 produtos de exemplo inseridos no MongoDB")
+      const result = await db.collection("products").insertMany(sampleProducts)
+      console.log(`✅ ${result.insertedCount} produtos de exemplo inseridos no MongoDB`)
     }
 
-    console.log(`📦 ${productsCount} produtos encontrados no MongoDB`)
-    console.log(`🏷️ ${categoriesCount} categorias encontradas no MongoDB`)
+    // Verificar se os dados foram realmente salvos
+    const finalProductsCount = await db.collection("products").countDocuments()
+    const finalCategoriesCount = await db.collection("categories").countDocuments()
+
+    console.log(`📦 Total final de produtos: ${finalProductsCount}`)
+    console.log(`🏷️ Total final de categorias: ${finalCategoriesCount}`)
+
+    // Listar algumas categorias para verificar
+    const sampleCategories = await db.collection("categories").find({}).limit(3).toArray()
+    console.log(
+      "🔍 Exemplo de categorias salvas:",
+      sampleCategories.map((c) => c.name),
+    )
+
+    // Listar alguns produtos para verificar
+    const sampleProducts = await db.collection("products").find({}).limit(3).toArray()
+    console.log(
+      "🔍 Exemplo de produtos salvos:",
+      sampleProducts.map((p) => p.name),
+    )
   } catch (error) {
     console.error("❌ Erro ao inicializar banco de dados:", error)
+    throw error
   }
 }
 
@@ -334,10 +295,12 @@ class SalesSystemServer {
     return emojiMap[category] || "📦"
   }
 
-  // MongoDB Operations
+  // MongoDB Operations - MELHORADAS COM LOGS DETALHADOS
   async getProducts() {
     try {
+      console.log("📦 Buscando produtos no MongoDB...")
       const products = await db.collection("products").find({}).sort({ createdAt: -1 }).toArray()
+      console.log(`✅ ${products.length} produtos encontrados`)
       return products
     } catch (error) {
       console.error("❌ Erro ao buscar produtos:", error)
@@ -347,7 +310,9 @@ class SalesSystemServer {
 
   async getCategories() {
     try {
+      console.log("🏷️ Buscando categorias no MongoDB...")
       const categories = await db.collection("categories").find({}).sort({ name: 1 }).toArray()
+      console.log(`✅ ${categories.length} categorias encontradas`)
       return categories
     } catch (error) {
       console.error("❌ Erro ao buscar categorias:", error)
@@ -357,7 +322,9 @@ class SalesSystemServer {
 
   async getSales() {
     try {
+      console.log("🧾 Buscando vendas no MongoDB...")
       const sales = await db.collection("sales").find({}).sort({ timestamp: -1 }).toArray()
+      console.log(`✅ ${sales.length} vendas encontradas`)
       return sales
     } catch (error) {
       console.error("❌ Erro ao buscar vendas:", error)
@@ -367,6 +334,8 @@ class SalesSystemServer {
 
   async addProduct(productData) {
     try {
+      console.log("📦 Adicionando produto:", productData.name)
+
       // Check if barcode already exists
       const existingProduct = await db.collection("products").findOne({ barcode: productData.barcode })
       if (existingProduct) {
@@ -387,7 +356,12 @@ class SalesSystemServer {
       const result = await db.collection("products").insertOne(newProduct)
       newProduct._id = result.insertedId
 
-      console.log(`✅ Produto adicionado ao MongoDB: ${newProduct.name}`)
+      console.log(`✅ Produto adicionado ao MongoDB: ${newProduct.name} (ID: ${newProduct._id})`)
+
+      // Verificar se foi realmente salvo
+      const verification = await db.collection("products").findOne({ _id: newProduct._id })
+      console.log("🔍 Verificação do produto salvo:", verification ? "OK" : "ERRO")
+
       return newProduct
     } catch (error) {
       console.error("❌ Erro ao adicionar produto:", error)
@@ -397,6 +371,7 @@ class SalesSystemServer {
 
   async updateProduct(productData) {
     try {
+      console.log("📦 Atualizando produto:", productData.name)
       const { _id, ...updateData } = productData
 
       // Check if barcode already exists in another product
@@ -431,6 +406,7 @@ class SalesSystemServer {
 
   async deleteProduct(productId) {
     try {
+      console.log("📦 Removendo produto:", productId)
       const result = await db.collection("products").deleteOne({ _id: new ObjectId(productId) })
 
       if (result.deletedCount === 0) {
@@ -447,9 +423,12 @@ class SalesSystemServer {
 
   async addCategory(categoryData) {
     try {
+      console.log(`🏷️ Tentando adicionar categoria: ${categoryData.name}`)
+
       // Check if category already exists
       const existingCategory = await db.collection("categories").findOne({ name: categoryData.name })
       if (existingCategory) {
+        console.log(`❌ Categoria já existe: ${categoryData.name}`)
         throw new Error(`Categoria já existe: ${categoryData.name}`)
       }
 
@@ -460,10 +439,20 @@ class SalesSystemServer {
         createdAt: new Date(),
       }
 
+      console.log("🏷️ Dados da categoria a ser inserida:", newCategory)
       const result = await db.collection("categories").insertOne(newCategory)
       newCategory._id = result.insertedId
 
-      console.log(`✅ Categoria adicionada ao MongoDB: ${newCategory.name}`)
+      console.log(`✅ Categoria adicionada ao MongoDB: ${newCategory.name} (ID: ${newCategory._id})`)
+
+      // Verificar se foi realmente salva
+      const verification = await db.collection("categories").findOne({ _id: newCategory._id })
+      console.log(`🔍 Verificação da categoria salva:`, verification)
+
+      // Contar total de categorias após inserção
+      const totalCategories = await db.collection("categories").countDocuments()
+      console.log(`📊 Total de categorias após inserção: ${totalCategories}`)
+
       return newCategory
     } catch (error) {
       console.error("❌ Erro ao adicionar categoria:", error)
@@ -473,6 +462,8 @@ class SalesSystemServer {
 
   async deleteCategory(categoryId) {
     try {
+      console.log("🏷️ Removendo categoria:", categoryId)
+
       // Check if category is default
       const category = await db.collection("categories").findOne({ _id: new ObjectId(categoryId) })
       if (category && category.isDefault) {
@@ -501,6 +492,7 @@ class SalesSystemServer {
 
   async saveSale(saleData) {
     try {
+      console.log("🧾 Salvando venda...")
       const sale = {
         code: this.generateSaleCode(),
         items: saleData.items || [],
@@ -526,7 +518,9 @@ class SalesSystemServer {
 
   async searchProduct(barcode) {
     try {
+      console.log("🔍 Buscando produto por código:", barcode)
       const product = await db.collection("products").findOne({ barcode: barcode })
+      console.log("🔍 Produto encontrado:", product ? product.name : "Não encontrado")
       return product
     } catch (error) {
       console.error("❌ Erro ao buscar produto:", error)
@@ -536,6 +530,7 @@ class SalesSystemServer {
 
   async searchSale(saleCode) {
     try {
+      console.log("🔍 Buscando venda por código:", saleCode)
       const sale = await db.collection("sales").findOne({ code: saleCode })
       return sale
     } catch (error) {
@@ -544,11 +539,82 @@ class SalesSystemServer {
     }
   }
 
+  // Teste de conexão MongoDB - MELHORADO
+  async testMongoDB() {
+    try {
+      console.log("🧪 Iniciando teste MongoDB...")
+
+      // Teste 1: Ping
+      await client.db("admin").command({ ping: 1 })
+      console.log("✅ Teste 1: Ping OK")
+
+      // Teste 2: Inserir documento de teste
+      const testDoc = {
+        test: true,
+        timestamp: new Date(),
+        message: "Teste de conexão MongoDB",
+      }
+
+      const result = await db.collection("test").insertOne(testDoc)
+      console.log(`✅ Teste 2: Inserção OK - ID: ${result.insertedId}`)
+
+      // Teste 3: Buscar documento
+      const foundDoc = await db.collection("test").findOne({ _id: result.insertedId })
+      console.log("✅ Teste 3: Busca OK")
+
+      // Teste 4: Limpar teste
+      await db.collection("test").deleteOne({ _id: result.insertedId })
+      console.log("✅ Teste 4: Limpeza OK")
+
+      // Teste 5: Verificar coleções principais
+      const productsCount = await db.collection("products").countDocuments()
+      const categoriesCount = await db.collection("categories").countDocuments()
+      console.log(`✅ Teste 5: Produtos: ${productsCount}, Categorias: ${categoriesCount}`)
+
+      return {
+        success: true,
+        message: `MongoDB funcionando perfeitamente! ${productsCount} produtos e ${categoriesCount} categorias encontradas.`,
+      }
+    } catch (error) {
+      console.error("❌ Erro no teste MongoDB:", error)
+      return { success: false, error: error.message }
+    }
+  }
+
   setupSocketHandlers() {
     io.on("connection", (socket) => {
       console.log(`🔗 Nova conexão: ${socket.id}`)
 
-      // Gerar código de sincronização
+      // Gerar código de sincronização AUTOMATICAMENTE para mobile
+      if (
+        socket.handshake.headers["user-agent"] &&
+        /Mobile|Android|iPhone|iPad/i.test(socket.handshake.headers["user-agent"])
+      ) {
+        const code = this.generateSyncCode()
+        const deviceData = {
+          code,
+          deviceType: "mobile",
+          socketId: socket.id,
+          timestamp: Date.now(),
+        }
+
+        this.syncCodes.set(code, deviceData)
+        this.connections.set(socket.id, { ...deviceData, role: "mobile" })
+
+        console.log(`📱 Código automático gerado para mobile: ${code}`)
+        socket.emit("sync-code-generated", { code, deviceType: "mobile" })
+
+        // Limpar código após 30 minutos (aumentado)
+        setTimeout(
+          () => {
+            this.syncCodes.delete(code)
+            console.log(`⏰ Código ${code} expirado`)
+          },
+          30 * 60 * 1000,
+        )
+      }
+
+      // Gerar código de sincronização manual
       socket.on("generate-sync-code", (data) => {
         const code = this.generateSyncCode()
         const deviceData = {
@@ -564,22 +630,25 @@ class SalesSystemServer {
         console.log(`📱 Código gerado: ${code} para dispositivo ${data.deviceType}`)
         socket.emit("sync-code-generated", { code, deviceType: data.deviceType })
 
-        // Limpar código após 10 minutos
+        // Limpar código após 30 minutos
         setTimeout(
           () => {
             this.syncCodes.delete(code)
+            console.log(`⏰ Código ${code} expirado`)
           },
-          10 * 60 * 1000,
+          30 * 60 * 1000,
         )
       })
 
       // Desktop conectando com código
       socket.on("connect-with-code", (data) => {
-        const code = data.code
+        const code = data.code.toUpperCase()
         console.log(`💻 Desktop tentando conectar com código: ${code}`)
+        console.log(`🔍 Códigos disponíveis:`, Array.from(this.syncCodes.keys()))
 
         const deviceData = this.syncCodes.get(code)
         if (!deviceData) {
+          console.log(`❌ Código ${code} não encontrado ou expirado`)
           socket.emit("connection-error", "Código inválido ou expirado")
           return
         }
@@ -589,6 +658,7 @@ class SalesSystemServer {
         const mobileSocket = io.sockets.sockets.get(mobileSocketId)
 
         if (!mobileSocket) {
+          console.log(`❌ Mobile ${mobileSocketId} desconectado`)
           socket.emit("connection-error", "Dispositivo móvel desconectado")
           return
         }
@@ -621,16 +691,30 @@ class SalesSystemServer {
           connectedDevice: socket.id,
         })
 
-        // Remover código usado
-        this.syncCodes.delete(code)
+        // NÃO remover código - manter para reconexões
+        console.log(`🔄 Código ${code} mantido para reconexões`)
+      })
+
+      // Teste MongoDB
+      socket.on("test-mongodb", async () => {
+        try {
+          console.log(`🧪 Teste MongoDB solicitado por ${socket.id}`)
+          const result = await this.testMongoDB()
+          socket.emit("mongodb-test-result", result)
+        } catch (error) {
+          console.error("❌ Erro no teste MongoDB:", error)
+          socket.emit("mongodb-test-result", { success: false, error: error.message })
+        }
       })
 
       // Get products from MongoDB
       socket.on("get-products", async () => {
         try {
           const products = await this.getProducts()
+          console.log(`📦 Enviando ${products.length} produtos para ${socket.id}`)
           socket.emit("products-list", { products })
         } catch (error) {
+          console.error("❌ Erro ao buscar produtos:", error)
           socket.emit("products-list", { products: [] })
         }
       })
@@ -639,8 +723,10 @@ class SalesSystemServer {
       socket.on("get-categories", async () => {
         try {
           const categories = await this.getCategories()
+          console.log(`🏷️ Enviando ${categories.length} categorias para ${socket.id}`)
           socket.emit("categories-list", { categories })
         } catch (error) {
+          console.error("❌ Erro ao buscar categorias:", error)
           socket.emit("categories-list", { categories: [] })
         }
       })
@@ -649,8 +735,10 @@ class SalesSystemServer {
       socket.on("get-sales", async () => {
         try {
           const sales = await this.getSales()
+          console.log(`🧾 Enviando ${sales.length} vendas para ${socket.id}`)
           socket.emit("sales-list", { sales })
         } catch (error) {
+          console.error("❌ Erro ao buscar vendas:", error)
           socket.emit("sales-list", { sales: [] })
         }
       })
@@ -658,6 +746,7 @@ class SalesSystemServer {
       // Add product to MongoDB
       socket.on("add-product", async (productData) => {
         try {
+          console.log(`📦 Solicitação para adicionar produto de ${socket.id}:`, productData)
           const newProduct = await this.addProduct(productData)
           socket.emit("product-added", {
             product: newProduct,
@@ -665,8 +754,11 @@ class SalesSystemServer {
           })
 
           // Notify all connected clients
-          io.emit("product-list-updated", { products: await this.getProducts() })
+          const updatedProducts = await this.getProducts()
+          io.emit("product-list-updated", { products: updatedProducts })
+          console.log("📢 Todos os clientes notificados sobre novo produto")
         } catch (error) {
+          console.error("❌ Erro ao adicionar produto:", error)
           socket.emit("product-add-error", error.message)
         }
       })
@@ -681,8 +773,10 @@ class SalesSystemServer {
           })
 
           // Notify all connected clients
-          io.emit("product-list-updated", { products: await this.getProducts() })
+          const updatedProducts = await this.getProducts()
+          io.emit("product-list-updated", { products: updatedProducts })
         } catch (error) {
+          console.error("❌ Erro ao atualizar produto:", error)
           socket.emit("product-update-error", error.message)
         }
       })
@@ -697,8 +791,10 @@ class SalesSystemServer {
           })
 
           // Notify all connected clients
-          io.emit("product-list-updated", { products: await this.getProducts() })
+          const updatedProducts = await this.getProducts()
+          io.emit("product-list-updated", { products: updatedProducts })
         } catch (error) {
+          console.error("❌ Erro ao excluir produto:", error)
           socket.emit("product-delete-error", error.message)
         }
       })
@@ -706,15 +802,24 @@ class SalesSystemServer {
       // Add category to MongoDB
       socket.on("add-category", async (categoryData) => {
         try {
+          console.log(`🏷️ Solicitação para adicionar categoria de ${socket.id}:`, categoryData)
           const newCategory = await this.addCategory(categoryData)
+
           socket.emit("category-added", {
             category: newCategory,
             message: "Categoria adicionada com sucesso!",
           })
 
           // Notify all connected clients
+          console.log(`📢 Notificando todos os clientes sobre nova categoria`)
           io.emit("categories-updated")
+
+          // Enviar lista atualizada
+          const updatedCategories = await this.getCategories()
+          io.emit("categories-list", { categories: updatedCategories })
+          console.log("📢 Lista de categorias atualizada enviada para todos")
         } catch (error) {
+          console.error("❌ Erro ao processar categoria:", error)
           socket.emit("category-add-error", error.message)
         }
       })
@@ -730,7 +835,10 @@ class SalesSystemServer {
 
           // Notify all connected clients
           io.emit("categories-updated")
+          const updatedCategories = await this.getCategories()
+          io.emit("categories-list", { categories: updatedCategories })
         } catch (error) {
+          console.error("❌ Erro ao excluir categoria:", error)
           socket.emit("category-delete-error", error.message)
         }
       })
@@ -750,6 +858,9 @@ class SalesSystemServer {
           if (product) {
             console.log(`📦 Produto escaneado: ${product.name}`)
             desktopSocket.emit("product-scanned", { product })
+          } else {
+            console.log(`❌ Produto não encontrado: ${data.product.barcode}`)
+            desktopSocket.emit("product-not-found", { barcode: data.product.barcode })
           }
         }
       })
@@ -841,9 +952,18 @@ class SalesSystemServer {
             const mobileSocket = io.sockets.sockets.get(connection.connectedMobile)
             if (mobileSocket) {
               mobileSocket.emit("device-disconnected")
-              mobileSocket.disconnect()
+
+              // Resetar mobile para mostrar código novamente
+              const mobileConnection = this.connections.get(connection.connectedMobile)
+              if (mobileConnection) {
+                delete mobileConnection.connectedDesktop
+                mobileSocket.emit("show-sync-code")
+              }
             }
           }
+
+          // Limpar conexão desktop
+          this.connections.delete(socket.id)
         }
       })
 
@@ -858,6 +978,13 @@ class SalesSystemServer {
             const mobileSocket = io.sockets.sockets.get(connection.connectedMobile)
             if (mobileSocket) {
               mobileSocket.emit("device-disconnected")
+
+              // Resetar mobile para mostrar código novamente
+              const mobileConnection = this.connections.get(connection.connectedMobile)
+              if (mobileConnection) {
+                delete mobileConnection.connectedDesktop
+                mobileSocket.emit("show-sync-code")
+              }
             }
           } else if (connection.role === "mobile" && connection.connectedDesktop) {
             const desktopSocket = io.sockets.sockets.get(connection.connectedDesktop)
@@ -866,10 +993,8 @@ class SalesSystemServer {
             }
           }
 
-          // Limpar código de sincronização se existir
-          if (connection.code) {
-            this.syncCodes.delete(connection.code)
-          }
+          // NÃO limpar código de sincronização - manter para reconexões
+          console.log(`🔄 Mantendo código ${connection.code} para reconexões`)
         }
 
         this.connections.delete(socket.id)
@@ -892,6 +1017,7 @@ class SalesSystemServer {
         activeCodes: this.syncCodes.size,
       }
     } catch (error) {
+      console.error("❌ Erro ao calcular estatísticas:", error)
       return {
         totalSales: 0,
         totalRevenue: 0,
@@ -911,23 +1037,54 @@ connectToMongoDB().then(() => {
 
   // Rotas da API
   app.get("/api/stats", async (req, res) => {
-    const stats = await salesSystem.getStats()
-    res.json(stats)
+    try {
+      const stats = await salesSystem.getStats()
+      res.json(stats)
+    } catch (error) {
+      console.error("❌ Erro ao buscar estatísticas:", error)
+      res.status(500).json({ error: "Erro interno do servidor" })
+    }
   })
 
   app.get("/api/sales", async (req, res) => {
-    const sales = await salesSystem.getSales()
-    res.json(sales)
+    try {
+      const sales = await salesSystem.getSales()
+      res.json(sales)
+    } catch (error) {
+      console.error("❌ Erro ao buscar vendas:", error)
+      res.status(500).json({ error: "Erro interno do servidor" })
+    }
   })
 
   app.get("/api/products", async (req, res) => {
-    const products = await salesSystem.getProducts()
-    res.json(products)
+    try {
+      const products = await salesSystem.getProducts()
+      res.json(products)
+    } catch (error) {
+      console.error("❌ Erro ao buscar produtos:", error)
+      res.status(500).json({ error: "Erro interno do servidor" })
+    }
   })
 
   app.get("/api/categories", async (req, res) => {
-    const categories = await salesSystem.getCategories()
-    res.json(categories)
+    try {
+      const categories = await salesSystem.getCategories()
+      res.json(categories)
+    } catch (error) {
+      console.error("❌ Erro ao buscar categorias:", error)
+      res.status(500).json({ error: "Erro interno do servidor" })
+    }
+  })
+
+  // Rota de teste MongoDB
+  app.get("/api/test-mongodb", async (req, res) => {
+    try {
+      const result = await salesSystem.testMongoDB()
+      res.json(result)
+    } catch (error) {
+      console.error("❌ Erro no teste MongoDB:", error)
+      res.status(500).json({ success: false, error: error.message })
+    }
   })
 
   app.post("/api/products", async (req, res) => {
@@ -939,6 +1096,7 @@ connectToMongoDB().then(() => {
         message: "Produto cadastrado com sucesso!",
       })
     } catch (error) {
+      console.error("❌ Erro ao adicionar produto via API:", error)
       res.status(400).json({ error: error.message })
     }
   })
@@ -953,6 +1111,7 @@ connectToMongoDB().then(() => {
         message: "Produto atualizado com sucesso!",
       })
     } catch (error) {
+      console.error("❌ Erro ao atualizar produto via API:", error)
       res.status(400).json({ error: error.message })
     }
   })
@@ -965,6 +1124,7 @@ connectToMongoDB().then(() => {
         message: "Produto excluído com sucesso!",
       })
     } catch (error) {
+      console.error("❌ Erro ao excluir produto via API:", error)
       res.status(400).json({ error: error.message })
     }
   })
@@ -978,21 +1138,27 @@ connectToMongoDB().then(() => {
         res.status(404).json({ found: false, message: "Produto não encontrado" })
       }
     } catch (error) {
+      console.error("❌ Erro ao buscar produto por código:", error)
       res.status(500).json({ error: error.message })
     }
   })
 
   app.get("/api/health", async (req, res) => {
-    const stats = await salesSystem.getStats()
-    res.json({
-      status: "OK",
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      connections: salesSystem.connections.size,
-      database: "MongoDB Atlas Connected",
-      stats: stats,
-      message: "LOJA VIALLI - Backend MongoDB funcionando perfeitamente!",
-    })
+    try {
+      const stats = await salesSystem.getStats()
+      res.json({
+        status: "OK",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        connections: salesSystem.connections.size,
+        database: "MongoDB Atlas Connected",
+        stats: stats,
+        message: "LOJA VIALLI - Backend MongoDB funcionando perfeitamente!",
+      })
+    } catch (error) {
+      console.error("❌ Erro ao verificar saúde:", error)
+      res.status(500).json({ error: "Erro interno do servidor" })
+    }
   })
 
   // Middleware de tratamento de erros
