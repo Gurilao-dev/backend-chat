@@ -32,7 +32,8 @@ app.use(
 app.use(express.json())
 
 // Conectar ao MongoDB
-const MONGODB_URI = "mongodb+srv://joaovitormagnagovialli:A7YXV8vHYhjid55G@gorila.vanwqbp.mongodb.net/loja-vialli?retryWrites=true&w=majority&appName=Gorila"
+const MONGODB_URI =
+  "mongodb+srv://joaovitormagnagovialli:A7YXV8vHYhjid55G@gorila.vanwqbp.mongodb.net/loja-vialli?retryWrites=true&w=majority&appName=Gorila"
 
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
@@ -40,9 +41,9 @@ mongoose.connect(MONGODB_URI, {
 })
 
 const db = mongoose.connection
-db.on('error', console.error.bind(console, '❌ Erro de conexão MongoDB:'))
-db.once('open', () => {
-  console.log('✅ Conectado ao MongoDB Atlas')
+db.on("error", console.error.bind(console, "❌ Erro de conexão MongoDB:"))
+db.once("open", () => {
+  console.log("✅ Conectado ao MongoDB Atlas")
   initializeDefaultData()
 })
 
@@ -56,81 +57,221 @@ const ProductSchema = new mongoose.Schema({
   bestseller: { type: Boolean, default: false },
   emoji: { type: String, default: "📦" },
   createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  updatedAt: { type: Date, default: Date.now },
 })
 
 const SaleSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true },
-  items: [{
-    id: String,
-    name: String,
-    price: Number,
-    cost: Number,
-    quantity: Number,
-    category: String
-  }],
+  items: [
+    {
+      id: String,
+      name: String,
+      price: Number,
+      cost: Number,
+      quantity: Number,
+      category: String,
+    },
+  ],
   subtotal: { type: Number, required: true },
   discount: { type: Number, default: 0 },
   finalTotal: { type: Number, required: true },
   totalCost: { type: Number, required: true },
   profit: { type: Number, required: true },
   itemCount: { type: Number, required: true },
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: Date, default: Date.now },
 })
 
 const CategorySchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },
   emoji: { type: String, default: "📦" },
   isDefault: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
 })
 
-const Product = mongoose.model('Product', ProductSchema)
-const Sale = mongoose.model('Sale', SaleSchema)
-const Category = mongoose.model('Category', CategorySchema)
+const Product = mongoose.model("Product", ProductSchema)
+const Sale = mongoose.model("Sale", SaleSchema)
+const Category = mongoose.model("Category", CategorySchema)
 
 // Inicializar dados padrão
 async function initializeDefaultData() {
   try {
     // Verificar se já existem produtos
     const productCount = await Product.countDocuments()
-    
+
     if (productCount === 0) {
-      console.log('📦 Inicializando produtos padrão...')
-      
+      console.log("📦 Inicializando produtos padrão...")
+
       const defaultProducts = [
-        { name: "iPhone 15 Pro Max", price: 8999.99, cost: 6500.0, category: "Smartphones", bestseller: true, barcode: "789123456001", emoji: "📱" },
-        { name: "MacBook Pro M3", price: 12999.99, cost: 9500.0, category: "Notebooks", bestseller: true, barcode: "789123456002", emoji: "💻" },
-        { name: "AirPods Pro 2", price: 2499.99, cost: 1800.0, category: "Áudio", bestseller: true, barcode: "789123456003", emoji: "🎧" },
-        { name: "iPad Air M2", price: 4999.99, cost: 3600.0, category: "Tablets", barcode: "789123456004", emoji: "📱" },
-        { name: "Apple Watch Ultra", price: 6999.99, cost: 5000.0, category: "Wearables", bestseller: true, barcode: "789123456005", emoji: "⌚" },
-        { name: "Samsung Galaxy S24", price: 6999.99, cost: 5200.0, category: "Smartphones", barcode: "789123456006", emoji: "📱" },
-        { name: "Dell XPS 13", price: 8999.99, cost: 6800.0, category: "Notebooks", barcode: "789123456007", emoji: "💻" },
-        { name: "Sony WH-1000XM5", price: 1999.99, cost: 1400.0, category: "Áudio", barcode: "789123456008", emoji: "🎧" },
-        { name: "Nintendo Switch OLED", price: 2499.99, cost: 1900.0, category: "Games", bestseller: true, barcode: "789123456009", emoji: "🎮" },
-        { name: "GoPro Hero 12", price: 3499.99, cost: 2600.0, category: "Câmeras", barcode: "789123456010", emoji: "📷" },
-        { name: "Kindle Oasis", price: 1499.99, cost: 1100.0, category: "E-readers", barcode: "789123456011", emoji: "📚" },
-        { name: "Echo Dot 5ª Gen", price: 399.99, cost: 280.0, category: "Smart Home", barcode: "789123456012", emoji: "🔊" },
-        { name: "Ring Video Doorbell", price: 899.99, cost: 650.0, category: "Segurança", barcode: "789123456013", emoji: "🚪" },
-        { name: "Fitbit Charge 6", price: 1299.99, cost: 950.0, category: "Fitness", barcode: "789123456014", emoji: "⌚" },
+        {
+          name: "iPhone 15 Pro Max",
+          price: 8999.99,
+          cost: 6500.0,
+          category: "Smartphones",
+          bestseller: true,
+          barcode: "789123456001",
+          emoji: "📱",
+        },
+        {
+          name: "MacBook Pro M3",
+          price: 12999.99,
+          cost: 9500.0,
+          category: "Notebooks",
+          bestseller: true,
+          barcode: "789123456002",
+          emoji: "💻",
+        },
+        {
+          name: "AirPods Pro 2",
+          price: 2499.99,
+          cost: 1800.0,
+          category: "Áudio",
+          bestseller: true,
+          barcode: "789123456003",
+          emoji: "🎧",
+        },
+        {
+          name: "iPad Air M2",
+          price: 4999.99,
+          cost: 3600.0,
+          category: "Tablets",
+          barcode: "789123456004",
+          emoji: "📱",
+        },
+        {
+          name: "Apple Watch Ultra",
+          price: 6999.99,
+          cost: 5000.0,
+          category: "Wearables",
+          bestseller: true,
+          barcode: "789123456005",
+          emoji: "⌚",
+        },
+        {
+          name: "Samsung Galaxy S24",
+          price: 6999.99,
+          cost: 5200.0,
+          category: "Smartphones",
+          barcode: "789123456006",
+          emoji: "📱",
+        },
+        {
+          name: "Dell XPS 13",
+          price: 8999.99,
+          cost: 6800.0,
+          category: "Notebooks",
+          barcode: "789123456007",
+          emoji: "💻",
+        },
+        {
+          name: "Sony WH-1000XM5",
+          price: 1999.99,
+          cost: 1400.0,
+          category: "Áudio",
+          barcode: "789123456008",
+          emoji: "🎧",
+        },
+        {
+          name: "Nintendo Switch OLED",
+          price: 2499.99,
+          cost: 1900.0,
+          category: "Games",
+          bestseller: true,
+          barcode: "789123456009",
+          emoji: "🎮",
+        },
+        {
+          name: "GoPro Hero 12",
+          price: 3499.99,
+          cost: 2600.0,
+          category: "Câmeras",
+          barcode: "789123456010",
+          emoji: "📷",
+        },
+        {
+          name: "Kindle Oasis",
+          price: 1499.99,
+          cost: 1100.0,
+          category: "E-readers",
+          barcode: "789123456011",
+          emoji: "📚",
+        },
+        {
+          name: "Echo Dot 5ª Gen",
+          price: 399.99,
+          cost: 280.0,
+          category: "Smart Home",
+          barcode: "789123456012",
+          emoji: "🔊",
+        },
+        {
+          name: "Ring Video Doorbell",
+          price: 899.99,
+          cost: 650.0,
+          category: "Segurança",
+          barcode: "789123456013",
+          emoji: "🚪",
+        },
+        {
+          name: "Fitbit Charge 6",
+          price: 1299.99,
+          cost: 950.0,
+          category: "Fitness",
+          barcode: "789123456014",
+          emoji: "⌚",
+        },
         { name: "Bose SoundLink", price: 799.99, cost: 580.0, category: "Áudio", barcode: "789123456015", emoji: "🔊" },
-        { name: "Logitech MX Master 3", price: 699.99, cost: 500.0, category: "Acessórios", barcode: "789123456016", emoji: "🖱️" },
-        { name: "Samsung 4K Monitor", price: 2999.99, cost: 2200.0, category: "Monitores", barcode: "789123456017", emoji: "🖥️" },
-        { name: "Razer Mechanical Keyboard", price: 1199.99, cost: 850.0, category: "Gaming", barcode: "789123456018", emoji: "⌨️" },
-        { name: "Anker PowerBank 20K", price: 299.99, cost: 200.0, category: "Acessórios", barcode: "789123456019", emoji: "🔋" },
-        { name: "Tesla Model Y Charger", price: 1999.99, cost: 1400.0, category: "Automotivo", barcode: "789123456020", emoji: "🚗" }
+        {
+          name: "Logitech MX Master 3",
+          price: 699.99,
+          cost: 500.0,
+          category: "Acessórios",
+          barcode: "789123456016",
+          emoji: "🖱️",
+        },
+        {
+          name: "Samsung 4K Monitor",
+          price: 2999.99,
+          cost: 2200.0,
+          category: "Monitores",
+          barcode: "789123456017",
+          emoji: "🖥️",
+        },
+        {
+          name: "Razer Mechanical Keyboard",
+          price: 1199.99,
+          cost: 850.0,
+          category: "Gaming",
+          barcode: "789123456018",
+          emoji: "⌨️",
+        },
+        {
+          name: "Anker PowerBank 20K",
+          price: 299.99,
+          cost: 200.0,
+          category: "Acessórios",
+          barcode: "789123456019",
+          emoji: "🔋",
+        },
+        {
+          name: "Tesla Model Y Charger",
+          price: 1999.99,
+          cost: 1400.0,
+          category: "Automotivo",
+          barcode: "789123456020",
+          emoji: "🚗",
+        },
       ]
-      
+
       await Product.insertMany(defaultProducts)
-      console.log('✅ Produtos padrão inseridos no MongoDB')
+      console.log("✅ Produtos padrão inseridos no MongoDB")
     }
-    
+
     // Verificar se já existem categorias
     const categoryCount = await Category.countDocuments()
-    
+
     if (categoryCount === 0) {
-      console.log('🏷️ Inicializando categorias padrão...')
-      
+      console.log("🏷️ Inicializando categorias padrão...")
+
       const defaultCategories = [
         { name: "Smartphones", emoji: "📱", isDefault: true },
         { name: "Notebooks", emoji: "💻", isDefault: true },
@@ -146,15 +287,14 @@ async function initializeDefaultData() {
         { name: "Acessórios", emoji: "🔋", isDefault: true },
         { name: "Monitores", emoji: "🖥️", isDefault: true },
         { name: "Gaming", emoji: "⌨️", isDefault: true },
-        { name: "Automotivo", emoji: "🚗", isDefault: true }
+        { name: "Automotivo", emoji: "🚗", isDefault: true },
       ]
-      
+
       await Category.insertMany(defaultCategories)
-      console.log('✅ Categorias padrão inseridas no MongoDB')
+      console.log("✅ Categorias padrão inseridas no MongoDB")
     }
-    
   } catch (error) {
-    console.error('❌ Erro ao inicializar dados padrão:', error)
+    console.error("❌ Erro ao inicializar dados padrão:", error)
   }
 }
 
@@ -222,9 +362,12 @@ class SalesSystemServer {
         socket.emit("sync-code-generated", { code, deviceType: data.deviceType })
 
         // Limpar código após 10 minutos
-        setTimeout(() => {
-          this.syncCodes.delete(code)
-        }, 10 * 60 * 1000)
+        setTimeout(
+          () => {
+            this.syncCodes.delete(code)
+          },
+          10 * 60 * 1000,
+        )
       })
 
       // Desktop conectando com código
@@ -294,13 +437,10 @@ class SalesSystemServer {
         if (desktopSocket) {
           try {
             // Buscar produto no MongoDB
-            const product = await Product.findOne({ 
-              $or: [
-                { barcode: data.product.barcode },
-                { _id: data.product.id }
-              ]
+            const product = await Product.findOne({
+              $or: [{ barcode: data.product.barcode }, { _id: data.product.id }],
             })
-            
+
             if (product) {
               console.log(`📦 Produto escaneado: ${product.name}`)
               desktopSocket.emit("product-scanned", { product })
@@ -308,7 +448,7 @@ class SalesSystemServer {
               console.log(`❌ Produto não encontrado: ${data.product.barcode}`)
             }
           } catch (error) {
-            console.error('❌ Erro ao buscar produto:', error)
+            console.error("❌ Erro ao buscar produto:", error)
           }
         }
       })
@@ -356,7 +496,7 @@ class SalesSystemServer {
               totalCost: saleData.totalCost || 0,
               profit: saleData.profit || 0,
               itemCount: saleData.itemCount || 0,
-              timestamp: new Date()
+              timestamp: new Date(),
             })
 
             await sale.save()
@@ -377,7 +517,7 @@ class SalesSystemServer {
             connection.total = 0
             connection.discount = 0
           } catch (error) {
-            console.error('❌ Erro ao salvar venda:', error)
+            console.error("❌ Erro ao salvar venda:", error)
             socket.emit("sale-error", "Erro ao finalizar venda")
           }
         }
@@ -427,7 +567,7 @@ class SalesSystemServer {
             newProduct: newProduct,
           })
         } catch (error) {
-          console.error('❌ Erro ao cadastrar produto:', error)
+          console.error("❌ Erro ao cadastrar produto:", error)
           socket.emit("product-add-error", "Erro interno ao cadastrar produto")
         }
       })
@@ -439,9 +579,9 @@ class SalesSystemServer {
         try {
           // Verificar se código de barras já existe em outro produto
           if (productData.barcode) {
-            const existingProduct = await Product.findOne({ 
+            const existingProduct = await Product.findOne({
               barcode: productData.barcode,
-              _id: { $ne: productData._id }
+              _id: { $ne: productData._id },
             })
             if (existingProduct) {
               socket.emit("product-update-error", `Código de barras já existe no produto: ${existingProduct.name}`)
@@ -461,7 +601,7 @@ class SalesSystemServer {
               emoji: this.getCategoryEmoji(productData.category),
               updatedAt: new Date(),
             },
-            { new: true }
+            { new: true },
           )
 
           if (updatedProduct) {
@@ -479,7 +619,7 @@ class SalesSystemServer {
             socket.emit("product-update-error", "Produto não encontrado")
           }
         } catch (error) {
-          console.error('❌ Erro ao atualizar produto:', error)
+          console.error("❌ Erro ao atualizar produto:", error)
           socket.emit("product-update-error", "Erro interno ao atualizar produto")
         }
       })
@@ -490,7 +630,7 @@ class SalesSystemServer {
 
         try {
           const deletedProduct = await Product.findByIdAndDelete(data.productId)
-          
+
           if (deletedProduct) {
             console.log(`✅ Produto excluído do MongoDB: ${deletedProduct.name}`)
             socket.emit("product-deleted", {
@@ -506,7 +646,7 @@ class SalesSystemServer {
             socket.emit("product-delete-error", "Produto não encontrado")
           }
         } catch (error) {
-          console.error('❌ Erro ao excluir produto:', error)
+          console.error("❌ Erro ao excluir produto:", error)
           socket.emit("product-delete-error", "Erro interno ao excluir produto")
         }
       })
@@ -517,7 +657,7 @@ class SalesSystemServer {
           const products = await Product.find().sort({ createdAt: -1 })
           socket.emit("products-list", { products })
         } catch (error) {
-          console.error('❌ Erro ao buscar produtos:', error)
+          console.error("❌ Erro ao buscar produtos:", error)
           socket.emit("products-error", "Erro ao carregar produtos")
         }
       })
@@ -532,7 +672,7 @@ class SalesSystemServer {
             found: !!product,
           })
         } catch (error) {
-          console.error('❌ Erro ao buscar produto por código:', error)
+          console.error("❌ Erro ao buscar produto por código:", error)
           socket.emit("product-search-result", {
             barcode,
             product: null,
@@ -547,7 +687,7 @@ class SalesSystemServer {
           const sales = await Sale.find().sort({ timestamp: -1 }).limit(100)
           socket.emit("sales-list", { sales })
         } catch (error) {
-          console.error('❌ Erro ao buscar vendas:', error)
+          console.error("❌ Erro ao buscar vendas:", error)
           socket.emit("sales-error", "Erro ao carregar vendas")
         }
       })
@@ -562,7 +702,7 @@ class SalesSystemServer {
             found: !!sale,
           })
         } catch (error) {
-          console.error('❌ Erro ao buscar venda:', error)
+          console.error("❌ Erro ao buscar venda:", error)
           socket.emit("sale-search-result", {
             code,
             sale: null,
@@ -577,7 +717,7 @@ class SalesSystemServer {
           const categories = await Category.find().sort({ name: 1 })
           socket.emit("categories-list", { categories })
         } catch (error) {
-          console.error('❌ Erro ao buscar categorias:', error)
+          console.error("❌ Erro ao buscar categorias:", error)
           socket.emit("categories-error", "Erro ao carregar categorias")
         }
       })
@@ -594,7 +734,7 @@ class SalesSystemServer {
           const newCategory = new Category({
             name: categoryData.name,
             emoji: categoryData.emoji || "📦",
-            isDefault: false
+            isDefault: false,
           })
 
           await newCategory.save()
@@ -608,7 +748,7 @@ class SalesSystemServer {
           // Notificar todos os dispositivos
           io.emit("categories-updated")
         } catch (error) {
-          console.error('❌ Erro ao adicionar categoria:', error)
+          console.error("❌ Erro ao adicionar categoria:", error)
           socket.emit("category-add-error", "Erro interno ao adicionar categoria")
         }
       })
@@ -638,7 +778,7 @@ class SalesSystemServer {
           // Notificar todos os dispositivos
           io.emit("categories-updated")
         } catch (error) {
-          console.error('❌ Erro ao excluir categoria:', error)
+          console.error("❌ Erro ao excluir categoria:", error)
           socket.emit("category-delete-error", "Erro interno ao excluir categoria")
         }
       })
@@ -699,9 +839,9 @@ class SalesSystemServer {
           $group: {
             _id: null,
             totalRevenue: { $sum: "$finalTotal" },
-            totalProfit: { $sum: "$profit" }
-          }
-        }
+            totalProfit: { $sum: "$profit" },
+          },
+        },
       ])
 
       const stats = salesData[0] || { totalRevenue: 0, totalProfit: 0 }
@@ -714,7 +854,7 @@ class SalesSystemServer {
         activeCodes: this.syncCodes.size,
       }
     } catch (error) {
-      console.error('❌ Erro ao obter estatísticas:', error)
+      console.error("❌ Erro ao obter estatísticas:", error)
       return {
         totalSales: 0,
         totalRevenue: 0,
@@ -740,7 +880,7 @@ app.get("/api/sales", async (req, res) => {
     const sales = await Sale.find().sort({ timestamp: -1 }).limit(100)
     res.json(sales)
   } catch (error) {
-    console.error('❌ Erro ao buscar vendas:', error)
+    console.error("❌ Erro ao buscar vendas:", error)
     res.status(500).json({ error: "Erro ao buscar vendas" })
   }
 })
@@ -750,7 +890,7 @@ app.get("/api/products", async (req, res) => {
     const products = await Product.find().sort({ createdAt: -1 })
     res.json(products)
   } catch (error) {
-    console.error('❌ Erro ao buscar produtos:', error)
+    console.error("❌ Erro ao buscar produtos:", error)
     res.status(500).json({ error: "Erro ao buscar produtos" })
   }
 })
@@ -792,7 +932,7 @@ app.post("/api/products", async (req, res) => {
       message: "Produto cadastrado com sucesso!",
     })
   } catch (error) {
-    console.error('❌ Erro ao criar produto via API:', error)
+    console.error("❌ Erro ao criar produto via API:", error)
     res.status(500).json({ error: "Erro interno do servidor" })
   }
 })
@@ -808,7 +948,7 @@ app.get("/api/products/:barcode", async (req, res) => {
       res.status(404).json({ found: false, message: "Produto não encontrado" })
     }
   } catch (error) {
-    console.error('❌ Erro ao buscar produto por código:', error)
+    console.error("❌ Erro ao buscar produto por código:", error)
     res.status(500).json({ error: "Erro interno do servidor" })
   }
 })
@@ -818,7 +958,7 @@ app.get("/api/categories", async (req, res) => {
     const categories = await Category.find().sort({ name: 1 })
     res.json(categories)
   } catch (error) {
-    console.error('❌ Erro ao buscar categorias:', error)
+    console.error("❌ Erro ao buscar categorias:", error)
     res.status(500).json({ error: "Erro ao buscar categorias" })
   }
 })
@@ -833,12 +973,12 @@ app.get("/api/health", async (req, res) => {
       connections: salesSystem.connections.size,
       database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
       message: "LOJA VIALLI - Backend funcionando perfeitamente com MongoDB!",
-      stats
+      stats,
     })
   } catch (error) {
     res.status(500).json({
       status: "ERROR",
-      message: "Erro ao obter status do sistema"
+      message: "Erro ao obter status do sistema",
     })
   }
 })
@@ -855,7 +995,7 @@ server.listen(PORT, () => {
   console.log(`🚀 LOJA VIALLI - Servidor rodando na porta ${PORT}`)
   console.log(`🌐 Acesse: http://localhost:${PORT}`)
   console.log(`📱 Sistema de vendas profissional ativo!`)
-  console.log(`💾 MongoDB: ${MONGODB_URI.includes('mongodb+srv') ? 'Atlas Cloud' : 'Local'}`)
+  console.log(`💾 MongoDB: ${MONGODB_URI.includes("mongodb+srv") ? "Atlas Cloud" : "Local"}`)
 })
 
 // Tratamento de erros
